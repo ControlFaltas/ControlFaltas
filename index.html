@@ -125,17 +125,21 @@
     signOut,
     onAuthStateChanged 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+  
+  // SE IMPORTA REALTIME DATABASE EN LUGAR DE FIRESTORE
   import { 
-    getFirestore, 
-    doc, 
-    setDoc, 
-    getDoc 
-  } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+    getDatabase, 
+    ref, 
+    set, 
+    onValue,
+    off 
+  } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
-  // Configuración de Firebase
+// Configuración de Firebase
   const firebaseConfig = {
     apiKey: "AIzaSyBapjfSE61etzDjye-bFN5x6XcP_5s1nTo",
     authDomain: "control-faltas-26.firebaseapp.com",
+    databaseURL: "https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app", // <--- Poner esta URL exacta
     projectId: "control-faltas-26",
     storageBucket: "control-faltas-26.firebasestorage.app",
     messagingSenderId: "1036495041102",
@@ -147,12 +151,14 @@
   const app = initializeApp(firebaseConfig);
   const analytics = getAnalytics(app);
   const auth = getAuth(app);
-  const db = getFirestore(app);
+  const db = getDatabase(app);
 
   let currentUser = null;
+  let userDbRef = null;
+  let isRemoteUpdate = false; // Evita bucles al recibir datos de la nube
 
   // Escuchar el estado de autenticación de usuario
-  onAuthStateChanged(auth, async (user) => {
+  onAuthStateChanged(auth, (user) => {
     currentUser = user;
     const authContainer = document.getElementById('auth-container');
     const mainContent = document.getElementById('main-content');
@@ -167,10 +173,13 @@
       if (userEmailDisplay) userEmailDisplay.textContent = user.displayName || (user.email ? user.email.split('@')[0] : 'Usuario');
       if (proximasClasesSection) proximasClasesSection.classList.remove('hidden');
 
-      // Cargar datos del usuario desde Firestore
-      await loadDataFromCloud(user.uid);
-      if (window.renderApp) window.renderApp(true);
+      // Escuchar cambios en tiempo real en la Realtime Database
+      listenToCloudData(user.uid);
     } else {
+      if (userDbRef) {
+        off(userDbRef); // Detener escucha al cerrar sesión
+        userDbRef = null;
+      }
       if (authContainer) authContainer.classList.remove('hidden');
       if (mainContent) mainContent.classList.add('hidden');
       if (userInfoBar) userInfoBar.classList.add('hidden');
@@ -178,33 +187,37 @@
     }
   });
 
-  // Guardar datos en la nube (Firestore)
-  window.saveDataToCloud = async (data) => {
-    if (!currentUser) return;
-    try {
-      const userRef = doc(db, "users", currentUser.uid);
-      await setDoc(userRef, { appData: data }, { merge: true });
-    } catch (error) {
-      console.error("Error al guardar en la nube:", error);
-    }
-  };
-
-  // Cargar datos desde la nube (Firestore)
-  async function loadDataFromCloud(uid) {
-    try {
-      const userRef = doc(db, "users", uid);
-      const docSnap = await getDoc(userRef);
-      if (docSnap.exists() && docSnap.data().appData) {
-        window.appData = docSnap.data().appData;
+  // Escuchador en Tiempo Real de Realtime Database
+  function listenToCloudData(uid) {
+    userDbRef = ref(db, 'users/' + uid + '/appData');
+    
+    onValue(userDbRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        isRemoteUpdate = true;
+        window.appData = data;
         localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+        if (window.renderApp) window.renderApp(false);
+        isRemoteUpdate = false;
       } else {
-        // Si no existen datos guardados en la nube, guarda el estado actual
+        // Si no existen datos guardados en la nube, guarda el estado local actual
         window.saveDataToCloud(window.appData);
       }
-    } catch (error) {
-      console.error("Error al cargar de la nube:", error);
-    }
+    }, (error) => {
+      console.error("Error al escuchar en Realtime Database:", error);
+    });
   }
+
+  // Guardar datos en la nube (Realtime Database)
+  window.saveDataToCloud = async (data) => {
+    if (!currentUser || isRemoteUpdate) return;
+    try {
+      const dataRef = ref(db, 'users/' + currentUser.uid + '/appData');
+      await set(dataRef, data);
+    } catch (error) {
+      console.error("Error al guardar en Realtime Database:", error);
+    }
+  };
 
   // Funciones globales de autenticación
   window.iniciarSesion = async (username, password) => {
