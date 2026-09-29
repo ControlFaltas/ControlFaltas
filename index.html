@@ -1,0 +1,1850 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Asistencia</title>
+
+    <!-- Configuración PWA y Móvil -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Faltas">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135755.png">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+
+        /* Botón flotante abajo a la derecha */
+        .floating-info-btn {
+          position: fixed;
+          bottom: 24px;
+          right: 24px;
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background-color: #2563eb;
+          color: #ffffff;
+          border: none;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.2s ease, background-color 0.2s ease;
+          z-index: 999;
+        }
+
+        .floating-info-btn:hover {
+          transform: scale(1.08);
+          background-color: #1d4ed8;
+        }
+
+        /* Modal / Ventana emergente */
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-color: rgba(15, 23, 42, 0.5);
+          backdrop-filter: blur(2px);
+          display: none;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          padding: 16px;
+          box-sizing: border-box;
+        }
+
+        .modal-overlay.active {
+          display: flex;
+        }
+
+        .modal-content {
+          background: #ffffff;
+          padding: 28px;
+          border-radius: 16px;
+          max-width: 600px;
+          width: 100%;
+          max-height: 85vh;
+          overflow-y: auto;
+          position: relative;
+          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .modal-close-btn {
+          position: absolute;
+          top: 18px;
+          right: 18px;
+          background: transparent;
+          border: none;
+          font-size: 22px;
+          cursor: pointer;
+          color: #64748b;
+          line-height: 1;
+        }
+
+        .modal-close-btn:hover {
+          color: #0f172a;
+        }
+    </style>
+    <!-- SDKs de Firebase (Versión modular compatible con CDN) -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+      import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+      import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+      // 1. Configuración de tu proyecto
+      const firebaseConfig = {
+        apiKey: "TU_API_KEY",
+        authDomain: "tu-proyecto.firebaseapp.com",
+        projectId: "tu-proyecto",
+        storageBucket: "tu-proyecto.appspot.com",
+        messagingSenderId: "TU_MESSAGING_SENDER_ID",
+        appId: "TU_APP_ID"
+      };
+
+      // Inicializar Firebase
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app);
+      const provider = new GoogleAuthProvider();
+
+      // Variables globales para tu app
+      window.currentUser = null;
+
+      // Controlar estado de sesión
+      onAuthStateChanged(auth, async (user) => {
+        const authContainer = document.getElementById('auth-container');
+        const mainContent = document.getElementById('main-content');
+        const userEmailDisplay = document.getElementById('user-email-display');
+
+        if (user) {
+          window.currentUser = user;
+          console.log("Usuario logueado:", user.email);
+          if (authContainer) authContainer.classList.add('hidden');
+          if (mainContent) mainContent.classList.remove('hidden');
+          if (userEmailDisplay) userEmailDisplay.innerText = user.email || user.displayName;
+
+          await loadUserDataFromCloud(user.uid);
+        } else {
+          window.currentUser = null;
+          console.log("No hay usuario activo");
+          if (authContainer) authContainer.classList.remove('hidden');
+          if (mainContent) mainContent.classList.add('hidden');
+          if (userEmailDisplay) userEmailDisplay.innerText = '';
+        }
+      });
+
+      // Autenticación por Correo
+      window.iniciarSesion = function(email, password) {
+        if (!email || !password) {
+            if (window.showToast) window.showToast("Por favor ingresa correo y contraseña", "warning");
+            return;
+        }
+        signInWithEmailAndPassword(auth, email, password)
+          .then((userCredential) => {
+            if (window.showToast) window.showToast("Sesión iniciada correctamente", "success");
+          })
+          .catch((error) => {
+            console.error("Error inicio sesión:", error);
+            if (window.showToast) window.showToast("Error al iniciar sesión: " + error.message, "danger");
+          });
+      };
+
+      window.registrarUsuario = function(email, password) {
+        if (!email || !password) {
+            if (window.showToast) window.showToast("Por favor ingresa correo y contraseña", "warning");
+            return;
+        }
+        createUserWithEmailAndPassword(auth, email, password)
+          .then((userCredential) => {
+            if (window.showToast) window.showToast("Cuenta creada exitosamente", "success");
+          })
+          .catch((error) => {
+            console.error("Error registro:", error);
+            if (window.showToast) window.showToast("Error al registrarse: " + error.message, "danger");
+          });
+      };
+
+      window.loginWithGoogle = function() {
+        signInWithPopup(auth, provider)
+          .then((result) => {
+            if (window.showToast) window.showToast("¡Bienvenido/a " + result.user.displayName + "!", "success");
+          }).catch((error) => {
+            console.error("Error en Google login:", error);
+            if (window.showToast) window.showToast("Error con Google Auth: " + error.message, "danger");
+          });
+      };
+
+      window.logoutUser = function() {
+        signOut(auth).then(() => {
+          if (window.showToast) window.showToast("Sesión cerrada correctamente", "info");
+        }).catch((error) => {
+          console.error("Error al cerrar sesión:", error);
+        });
+      };
+
+      window.saveDataToCloud = async function(appData) {
+        if (!window.currentUser) return;
+        try {
+          const userDocRef = doc(db, "users", window.currentUser.uid);
+          await setDoc(userDocRef, { data: appData, updatedAt: new Date() });
+          console.log("Datos guardados en la nube.");
+        } catch (e) {
+          console.error("Error al guardar en la nube: ", e);
+        }
+      };
+
+      async function loadUserDataFromCloud(uid) {
+        try {
+          const userDocRef = doc(db, "users", uid);
+          const docSnap = await getDoc(userDocRef);
+          if (docSnap.exists()) {
+            const cloudData = docSnap.data().data;
+            if (cloudData && window.renderApp) {
+                window.appData = cloudData;
+                window.saveToLocalStorage();
+                window.renderApp();
+            }
+          }
+        } catch (e) {
+          console.error("Error al leer de la nube:", e);
+        }
+      }
+    </script>
+</head>
+
+<body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
+
+    <!-- Header -->
+    <header class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                    <i class="fa-solid fa-graduation-cap text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight tracking-tight">Faltas</h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Control de Asistencia</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+                <!-- User account indicator & Logout button -->
+                <div id="user-info-bar" class="hidden sm:flex items-center space-x-2 bg-slate-100 dark:bg-slate-700/60 px-3 py-1.5 rounded-xl border border-slate-200/60 dark:border-slate-600/40">
+                    <i class="fa-solid fa-circle-user text-indigo-500 text-sm"></i>
+                    <span id="user-email-display" class="text-xs font-semibold text-slate-700 dark:text-slate-200 max-w-[150px] truncate"></span>
+                    <button onclick="logoutUser()" title="Cerrar sesión" class="text-xs text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 font-bold ml-1 transition">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+
+                <!-- Global Limit Button -->
+                <button onclick="openSettingsModal()" class="inline-flex items-center space-x-2 text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-xl transition font-medium">
+                    <i class="fa-solid fa-gear text-indigo-500"></i>
+                    <span class="hidden sm:inline">Configurar Límite</span>
+                    <span id="globalLimitBadge" class="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">15%</span>
+                </button>
+
+                <!-- Theme Toggle Button -->
+                <button onclick="toggleDarkMode()" class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i id="themeIcon" class="fa-solid fa-moon"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Modal / Pantalla de Autenticación Elegante -->
+    <div id="auth-container" class="my-auto px-4 py-8 max-w-md w-full mx-auto">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl p-8 border border-slate-200 dark:border-slate-700 shadow-xl text-center space-y-6">
+            <div class="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner">
+                <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div>
+                <h2 class="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Acceso a tu Asistencia</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Inicia sesión o regístrate para sincronizar tu horario en la nube.</p>
+            </div>
+
+            <div class="space-y-3.5 text-left">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Correo electrónico</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-envelope absolute left-4 top-3.5 text-slate-400 text-sm"></i>
+                        <input type="email" id="auth-email" placeholder="estudiante@ejemplo.com" class="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Contraseña</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-lock absolute left-4 top-3.5 text-slate-400 text-sm"></i>
+                        <input type="password" id="auth-password" placeholder="••••••••" class="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2.5 pt-2">
+                <button onclick="iniciarSesion(document.getElementById('auth-email').value, document.getElementById('auth-password').value)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl text-sm shadow-md shadow-indigo-500/20 transition active:scale-95">
+                    Iniciar Sesión
+                </button>
+                <button onclick="registrarUsuario(document.getElementById('auth-email').value, document.getElementById('auth-password').value)" class="w-full bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold py-3 rounded-xl text-sm transition active:scale-95">
+                    Crear Cuenta
+                </button>
+            </div>
+
+            <div class="relative flex py-1 items-center">
+                <div class="flex-grow border-t border-slate-200 dark:border-slate-700"></div>
+                <span class="flex-shrink mx-3 text-slate-400 text-xs font-medium uppercase">o accede con</span>
+                <div class="flex-grow border-t border-slate-200 dark:border-slate-700"></div>
+            </div>
+
+            <button onclick="loginWithGoogle()" class="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold py-3 rounded-xl text-sm transition flex items-center justify-center space-x-2 shadow-sm">
+                <i class="fa-brands fa-google text-red-500"></i>
+                <span>Continuar con Google</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Contenido Principal de la Aplicación -->
+    <main id="main-content" class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 hidden">
+        
+        <!-- Stats Summary Banner -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xl font-bold">
+                    <i class="fa-solid fa-book-open"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Asignaturas</p>
+                    <h3 id="statTotalSubjects" class="text-2xl font-bold mt-0.5">0</h3>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">En Riesgo / Límite Superado</p>
+                    <h3 id="statRiskSubjects" class="text-2xl font-bold mt-0.5 text-rose-600 dark:text-rose-400">0</h3>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center space-x-4">
+                <div class="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xl font-bold">
+                    <i class="fa-solid fa-clock"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Horas Faltadas</p>
+                    <h3 id="statTotalAbsences" class="text-2xl font-bold mt-0.5 text-indigo-600 dark:text-indigo-400">0 h</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 mb-6 pb-2">
+            <div class="flex space-x-2 overflow-x-auto">
+                <button id="tabBtnSchedule" onclick="switchTab('schedule')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-indigo-600 text-white shadow-md shadow-indigo-500/20 whitespace-nowrap">
+                    <i class="fa-solid fa-calendar-days"></i>
+                    <span>Horario Escolar</span>
+                </button>
+                <button id="tabBtnCards" onclick="switchTab('cards')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 whitespace-nowrap">
+                    <i class="fa-solid fa-list-check"></i>
+                    <span>Vista por Asignaturas</span>
+                </button>
+                <button id="tabBtnCalendar" onclick="switchTab('calendar')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 whitespace-nowrap">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <span>Historial de Faltas</span>
+                </button>
+            </div>
+
+            <!-- Global Action (Add subject) -->
+            <button onclick="openAddSubjectModal()" class="inline-flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded-xl text-sm shadow-md transition active:scale-95 shrink-0 ml-2">
+                <i class="fa-solid fa-plus"></i>
+                <span class="hidden sm:inline">Nueva Asignatura</span>
+            </button>
+        </div>
+
+        <!-- SECTION 1: HORARIO ESCOLAR (DEFAULT TAB) -->
+        <div id="sectionSchedule" class="space-y-6">
+            <div class="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                
+                <!-- Selector de Semana -->
+                <div class="mb-6 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-sm">
+                            <i class="fa-solid fa-calendar-week"></i>
+                        </div>
+                        <div>
+                            <span class="text-xs text-slate-400 uppercase font-semibold tracking-wider block">Semana seleccionada</span>
+                            <span id="currentWeekRangeLabel" class="text-sm font-bold text-slate-800 dark:text-slate-100">Cargando fechas...</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
+                        <button onclick="changeWeek(-1)" class="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1">
+                            <i class="fa-solid fa-chevron-left text-[10px]"></i>
+                            <span>Semana anterior</span>
+                        </button>
+                        <button onclick="resetToCurrentWeek()" class="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 text-xs font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition">
+                            Esta semana
+                        </button>
+                        <button onclick="changeWeek(1)" class="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1">
+                            <span>Semana siguiente</span>
+                            <i class="fa-solid fa-chevron-right text-[10px]"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+                    <div>
+                        <h2 class="text-lg font-bold">Horario de Clases Interactivo</h2>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">
+                            Haz clic en una clase para <strong>marcar o desmarcar la falta</strong> de esa hora.
+                        </p>
+                    </div>
+                    
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="openSlotModal()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition flex items-center space-x-1.5">
+                            <i class="fa-solid fa-clock-rotate-left text-indigo-500"></i>
+                            <span>Añadir Hora / Recreo</span>
+                        </button>
+                        <button id="editScheduleBtn" onclick="toggleEditScheduleMode()" class="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1.5">
+                            <i id="editScheduleIcon" class="fa-solid fa-pen text-indigo-500"></i>
+                            <span id="editScheduleText">Editar Horario y Asignaciones</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Mode Indicator Banner -->
+                <div id="editScheduleNotice" class="hidden mb-4 p-3 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between">
+                    <span class="flex items-center">
+                        <i class="fa-solid fa-circle-info mr-2 text-amber-500"></i>
+                        <strong>Modo Edición Activo:</strong> Puedes editar o borrar los tramos horarios en la columna izquierda, y hacer clic en las celdas para cambiar qué clase se imparte.
+                    </span>
+                    <button onclick="toggleEditScheduleMode()" class="font-bold underline text-xs ml-2">Finalizar edición</button>
+                </div>
+
+                <!-- Timetable Grid Wrapper -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[700px]">
+                        <thead>
+                            <tr>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-xs font-semibold uppercase text-slate-400 w-36">Hora / Tramo</th>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-center">
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">Lunes</div>
+                                    <div id="dayDate_0" class="text-[11px] text-slate-400 font-normal mb-1">--/--</div>
+                                    <button onclick="markFullDayAbsence(0)" class="mt-1 w-full py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-300 text-[11px] font-semibold transition flex items-center justify-center space-x-1">
+                                        <i class="fa-solid fa-calendar-xmark text-xs"></i>
+                                        <span>Faltar Día</span>
+                                    </button>
+                                </th>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-center">
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">Martes</div>
+                                    <div id="dayDate_1" class="text-[11px] text-slate-400 font-normal mb-1">--/--</div>
+                                    <button onclick="markFullDayAbsence(1)" class="mt-1 w-full py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-300 text-[11px] font-semibold transition flex items-center justify-center space-x-1">
+                                        <i class="fa-solid fa-calendar-xmark text-xs"></i>
+                                        <span>Faltar Día</span>
+                                    </button>
+                                </th>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-center">
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">Miércoles</div>
+                                    <div id="dayDate_2" class="text-[11px] text-slate-400 font-normal mb-1">--/--</div>
+                                    <button onclick="markFullDayAbsence(2)" class="mt-1 w-full py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-300 text-[11px] font-semibold transition flex items-center justify-center space-x-1">
+                                        <i class="fa-solid fa-calendar-xmark text-xs"></i>
+                                        <span>Faltar Día</span>
+                                    </button>
+                                </th>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-center">
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">Jueves</div>
+                                    <div id="dayDate_3" class="text-[11px] text-slate-400 font-normal mb-1">--/--</div>
+                                    <button onclick="markFullDayAbsence(3)" class="mt-1 w-full py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-300 text-[11px] font-semibold transition flex items-center justify-center space-x-1">
+                                        <i class="fa-solid fa-calendar-xmark text-xs"></i>
+                                        <span>Faltar Día</span>
+                                    </button>
+                                </th>
+                                <th class="p-3 border-b border-slate-200 dark:border-slate-700 text-center">
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">Viernes</div>
+                                    <div id="dayDate_4" class="text-[11px] text-slate-400 font-normal mb-1">--/--</div>
+                                    <button onclick="markFullDayAbsence(4)" class="mt-1 w-full py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-300 text-[11px] font-semibold transition flex items-center justify-center space-x-1">
+                                        <i class="fa-solid fa-calendar-xmark text-xs"></i>
+                                        <span>Faltar Día</span>
+                                    </button>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduleTableBody">
+                            <!-- Dynamic rows generated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 2: VISTA POR ASIGNATURAS / TARJETAS (CARDS TAB) -->
+        <div id="sectionCards" class="hidden space-y-6">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-bold tracking-tight">Mis Asignaturas y Control Manual</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400">Resumen de faltas acumuladas, límites de cada materia y ajustes rápidos.</p>
+                </div>
+            </div>
+
+            <div id="subjectsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Dynamic Subject Cards injected here via JS -->
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden flex flex-col items-center justify-center py-16 px-4 bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 text-center mt-4">
+                <div class="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-500 rounded-3xl flex items-center justify-center text-3xl mb-4 shadow-inner">
+                    <i class="fa-solid fa-folder-open"></i>
+                </div>
+                <h3 class="text-lg font-bold">No hay asignaturas registradas</h3>
+                <p class="text-sm text-slate-500 dark:text-slate-400 max-w-sm mt-1 mb-6">Añade tus clases para poder configurar tu horario escolar y controlar las horas acumuladas.</p>
+                <button onclick="openAddSubjectModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2.5 rounded-xl shadow-md transition">
+                    <i class="fa-solid fa-plus mr-2"></i> Añadir primera asignatura
+                </button>
+            </div>
+        </div>
+
+        <!-- SECTION 3: CALENDARIO SEMANAL Y LOG DE FALTAS -->
+        <div id="sectionCalendar" class="hidden space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- Vista del Horario Semanal de Faltas -->
+                <div class="lg:col-span-8 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                    
+                    <!-- Selector de Semana del Historial -->
+                    <div class="mb-6 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-sm">
+                                <i class="fa-solid fa-calendar-week"></i>
+                            </div>
+                            <div>
+                                <span class="text-xs text-slate-400 uppercase font-semibold tracking-wider block">Semana del historial</span>
+                                <span id="historyWeekRangeLabel" class="text-sm font-bold text-slate-800 dark:text-slate-100">Cargando fechas...</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
+                            <button onclick="changeHistoryWeek(-1)" class="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1">
+                                <i class="fa-solid fa-chevron-left text-[10px]"></i>
+                                <span>Semana anterior</span>
+                            </button>
+                            <button onclick="resetHistoryToCurrentWeek()" class="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 text-xs font-semibold hover:bg-indigo-100 transition">
+                                Esta semana
+                            </button>
+                            <button onclick="changeHistoryWeek(1)" class="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1">
+                                <span>Semana siguiente</span>
+                                <i class="fa-solid fa-chevron-right text-[10px]"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h2 class="text-lg font-bold">Registro de Faltas en el Horario</h2>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">
+                            Las horas en las que registraste falta se destacan en color rojo con el nombre de la asignatura.
+                        </p>
+                    </div>
+
+                    <!-- Horario Semanal con Horas Exactas -->
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse min-w-[650px]">
+                            <thead>
+                                <tr>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-xs font-semibold uppercase text-slate-400 w-32">Hora</th>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-center">
+                                        <div class="font-bold text-xs text-slate-800 dark:text-slate-200">Lunes</div>
+                                        <div id="historyDayDate_0" class="text-[10px] text-slate-400 font-normal">--/--</div>
+                                    </th>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-center">
+                                        <div class="font-bold text-xs text-slate-800 dark:text-slate-200">Martes</div>
+                                        <div id="historyDayDate_1" class="text-[10px] text-slate-400 font-normal">--/--</div>
+                                    </th>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-center">
+                                        <div class="font-bold text-xs text-slate-800 dark:text-slate-200">Miércoles</div>
+                                        <div id="historyDayDate_2" class="text-[10px] text-slate-400 font-normal">--/--</div>
+                                    </th>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-center">
+                                        <div class="font-bold text-xs text-slate-800 dark:text-slate-200">Jueves</div>
+                                        <div id="historyDayDate_3" class="text-[10px] text-slate-400 font-normal">--/--</div>
+                                    </th>
+                                    <th class="p-2.5 border-b border-slate-200 dark:border-slate-700 text-center">
+                                        <div class="font-bold text-xs text-slate-800 dark:text-slate-200">Viernes</div>
+                                        <div id="historyDayDate_4" class="text-[10px] text-slate-400 font-normal">--/--</div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyWeeklyTableBody">
+                                <!-- Filas generadas dinámicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Historial / Detalle Lista de Registros -->
+                <div class="lg:col-span-4 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-bold flex items-center space-x-2">
+                            <i class="fa-solid fa-list text-indigo-500"></i>
+                            <span>Detalle de Faltas</span>
+                        </h3>
+                    </div>
+
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Registro cronológico con fecha y hora exacta:</p>
+
+                    <div id="historyLogsList" class="space-y-3 overflow-y-auto max-h-[460px] pr-1 flex-grow">
+                        <!-- Dynamic list of logs -->
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Botón Flotante de Información -->
+    <button class="floating-info-btn" onclick="openInfoModal()" title="Información">
+        <i class="fa-solid fa-info text-lg"></i>
+    </button>
+
+    <!-- Modal de Información -->
+    <div id="infoModal" class="modal-overlay">
+        <div class="modal-content dark:bg-slate-800 dark:text-slate-100">
+            <button class="modal-close-btn dark:text-slate-400 dark:hover:text-white" onclick="closeInfoModal()">&times;</button>
+            <h2 class="text-xl font-bold mb-3 text-slate-900 dark:text-white">Controla tus Faltas y Protege tu Evaluación Continua</h2>
+            
+            <div class="space-y-4 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                <div class="p-3.5 rounded-2xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-900 dark:text-indigo-200 text-xs sm:text-sm font-medium">
+                    <strong>Olvídate de hacer cuentas a mano</strong> o de llevar el registro en notas sueltas. Esta herramienta web/app está diseñada específicamente para estudiantes que necesitan mantener un control exacto de su asistencia a clase y evitar sorpresas desagradables a final de curso.
+                </div>
+
+                <div>
+                    <h3 class="font-bold text-slate-900 dark:text-white mb-2 text-sm uppercase tracking-wider">¿Qué puedes hacer con la aplicación?</h3>
+                    <ul class="space-y-2 list-disc pl-5">
+                        <li><strong>Registro por fechas:</strong> Marca y consulta de un vistazo qué días y a qué asignaturas o módulos has faltado.</li>
+                        <li><strong>Contador automático:</strong> Visualiza en tiempo real el total de faltas acumuladas por materia y en el cómputo global.</li>
+                        <li><strong>Calculadora del margen del 15%:</strong> Conoce con precisión cuántas faltas te quedan disponibles antes de alcanzar el límite del 15% de ausencias (el umbral estipulado habitualmente en Ciclos Formativos de Formación Profesional para no perder la evaluación continua).</li>
+                        <li><strong>Visión clara del estado:</strong> Identifica de forma gráfica cuáles tienes bajo control y en cuáles estás entrando en zona de riesgo.</li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h3 class="font-bold text-slate-900 dark:text-white mb-2 text-sm uppercase tracking-wider">¿Por qué utilizar esta herramienta?</h3>
+                    <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-2">
+                        En la Formación Profesional y otros estudios reglados, superar el 15% de faltas de asistencia suele implicar la pérdida del derecho a la evaluación continua del módulo. La aplicación elimina la incertidumbre gracias a:
+                    </p>
+                    <ul class="space-y-2 list-disc pl-5">
+                        <li><strong>Precisión absoluta:</strong> Sabes en todo momento tu porcentaje real sin depender de estimaciones.</li>
+                        <li><strong>Gestión preventiva:</strong> Te permite planificar ausencias justificadas o imprevistas manteniendo siempre un margen de seguridad.</li>
+                        <li><strong>Acceso rápido:</strong> Una interfaz intuitiva pensada para registrar tu asistencia en un par de clics desde el móvil o el ordenador.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Create / Edit Time Slot or Break -->
+    <div id="timeSlotModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-5">
+                <h3 id="slotModalTitle" class="text-lg font-bold">Añadir Tramo / Recreo</h3>
+                <button onclick="closeSlotModal()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <form id="slotForm" onsubmit="handleSlotSubmit(event)" class="space-y-4">
+                <input type="hidden" id="editSlotId">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Nombre o Horario del Tramo</label>
+                    <input type="text" id="slotLabel" required placeholder="Ej. 14:30 - 15:30 o Recreo de la mañana" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Tipo de Tramo</label>
+                    <select id="slotType" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="class">Hora lectiva (Clase)</option>
+                        <option value="break">Recreo / Descanso (Fila completa)</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                    <button type="button" onclick="closeSlotModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium transition">Cancelar</button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-md shadow-indigo-500/20 transition">Guardar Tramo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Add/Edit Subject -->
+    <div id="subjectModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 transform transition-all">
+            <div class="flex items-center justify-between mb-5">
+                <h3 id="modalTitle" class="text-lg font-bold">Añadir Nueva Asignatura</h3>
+                <button onclick="closeSubjectModal()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <form id="subjectForm" onsubmit="handleSubjectSubmit(event)" class="space-y-4">
+                <input type="hidden" id="editSubjectId">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Nombre de la Asignatura</label>
+                    <input type="text" id="subjectName" required placeholder="Ej. Matemáticas, Programación..." class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Total Horas Curso</label>
+                        <input type="number" id="subjectTotalHours" min="1" required value="60" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Límite Faltas (%)</label>
+                        <input type="number" id="subjectLimit" min="1" max="100" step="0.5" placeholder="Usar global" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                    <button type="button" onclick="closeSubjectModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium transition">Cancelar</button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-md shadow-indigo-500/20 transition">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Assign Subject to Cell in Schedule -->
+    <div id="assignSlotModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold">Asignar Asignatura</h3>
+                <button onclick="closeAssignSlotModal()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <p id="assignSlotSubhead" class="text-xs text-slate-500 dark:text-slate-400 mb-4">Selecciona qué clase se imparte a esta hora:</p>
+            
+            <div id="assignSlotList" class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <!-- Dynamically populated list of subjects -->
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end">
+                <button onclick="closeAssignSlotModal()" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-xs font-semibold transition">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-5">
+                <h3 class="text-lg font-bold">Configuración Global</h3>
+                <button onclick="closeSettingsModal()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <form onsubmit="handleSettingsSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Límite Global de Faltas (%)</label>
+                    <input type="number" id="globalLimitInput" min="1" max="100" step="0.5" required class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                    <button type="button" onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium transition">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-md transition">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-24 opacity-0 transition-all duration-300 max-w-sm bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-3 rounded-2xl shadow-xl flex items-center space-x-3">
+        <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+        <span id="toastMessage" class="text-sm font-medium">Operación realizada con éxito</span>
+    </div>
+
+    <script>
+        // Registro del Service Worker para PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker registrado con éxito:', reg))
+                    .catch(err => console.error('Error al registrar Service Worker:', err));
+            });
+        }
+
+        const DAYS_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
+
+        const SUBJECT_COLORS = [
+            "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800",
+            "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
+            "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 border-sky-200 dark:border-sky-800",
+            "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800",
+            "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border-purple-200 dark:border-purple-800",
+            "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 border-rose-200 dark:border-rose-800",
+            "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300 border-teal-200 dark:border-teal-800"
+        ];
+
+        window.appData = {
+            globalLimit: 15,
+            subjects: [],
+            timeSlots: [],
+            schedule: {},
+            absenceLogs: []
+        };
+
+        let isEditScheduleMode = false;
+        let selectedCellForAssign = null;
+        
+        let currentWeekOffset = 0;
+        let historyWeekOffset = 0;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadFromLocalStorage();
+            initTheme();
+            renderApp();
+        });
+
+        function openInfoModal() {
+            document.getElementById('infoModal').classList.add('active');
+        }
+
+        function closeInfoModal() {
+            document.getElementById('infoModal').classList.remove('active');
+        }
+
+        function loadFromLocalStorage() {
+            const savedData = localStorage.getItem('attendance_app_hours_data');
+            if (savedData) {
+                try {
+                    window.appData = JSON.parse(savedData);
+                    if (window.appData.globalLimit === undefined) window.appData.globalLimit = 15;
+                    if (!window.appData.subjects) window.appData.subjects = [];
+                    if (!window.appData.schedule) window.appData.schedule = {};
+                    if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
+                    if (!window.appData.timeSlots || window.appData.timeSlots.length === 0) {
+                        window.appData.timeSlots = getDefaultTimeSlots();
+                    }
+                } catch (e) {
+                    console.error("Error al cargar datos", e);
+                }
+            } else {
+                window.appData = {
+                    globalLimit: 15,
+                    subjects: [
+                        { id: '1', name: 'Álgebra y Geometría', totalHours: 60, absences: 2, customLimit: null },
+                        { id: '2', name: 'Programación Web', totalHours: 80, absences: 5, customLimit: 20 },
+                        { id: '3', name: 'Bases de Datos', totalHours: 50, absences: 0, customLimit: null }
+                    ],
+                    timeSlots: getDefaultTimeSlots(),
+                    schedule: {
+                        "0_slot_1": "1",
+                        "0_slot_2": "1",
+                        "1_slot_1": "2",
+                        "1_slot_2": "2",
+                        "2_slot_3": "3",
+                        "3_slot_5": "2",
+                        "4_slot_6": "1"
+                    },
+                    absenceLogs: []
+                };
+                saveToLocalStorage();
+            }
+        }
+
+        function getDefaultTimeSlots() {
+            return [
+                { id: 'slot_1', label: '08:00 - 09:00', isBreak: false },
+                { id: 'slot_2', label: '09:00 - 10:00', isBreak: false },
+                { id: 'slot_3', label: '10:00 - 11:00', isBreak: false },
+                { id: 'slot_break_1', label: '11:00 - 11:30 (Recreo)', isBreak: true },
+                { id: 'slot_5', label: '11:30 - 12:30', isBreak: false },
+                { id: 'slot_6', label: '12:30 - 13:30', isBreak: false },
+                { id: 'slot_7', label: '13:30 - 14:30', isBreak: false }
+            ];
+        }
+
+        window.saveToLocalStorage = function() {
+            localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+            if (window.saveDataToCloud) {
+                window.saveDataToCloud(window.appData);
+            }
+        };
+
+        function initTheme() {
+            const isDark = localStorage.getItem('attendance_dark_mode') === 'true' || 
+                (!localStorage.getItem('attendance_dark_mode') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+                document.getElementById('themeIcon').className = "fa-solid fa-sun";
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.getElementById('themeIcon').className = "fa-solid fa-moon";
+            }
+        }
+
+        function toggleDarkMode() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('attendance_dark_mode', isDark);
+            document.getElementById('themeIcon').className = isDark ? "fa-solid fa-sun" : "fa-solid fa-moon";
+        }
+
+        window.showToast = function(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+            const toastIcon = document.getElementById('toastIcon');
+
+            if (!toast || !toastMessage || !toastIcon) return;
+
+            toastMessage.textContent = message;
+            if (type === 'success') {
+                toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-lg";
+            } else if (type === 'warning') {
+                toastIcon.className = "fa-solid fa-triangle-exclamation text-amber-400 text-lg";
+            } else if (type === 'info') {
+                toastIcon.className = "fa-solid fa-circle-info text-sky-400 text-lg";
+            } else {
+                toastIcon.className = "fa-solid fa-circle-xmark text-rose-400 text-lg";
+            }
+
+            toast.classList.remove('translate-y-24', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-24', 'opacity-0');
+            }, 3000);
+        };
+
+        function switchTab(tab) {
+            const btnSchedule = document.getElementById('tabBtnSchedule');
+            const btnCards = document.getElementById('tabBtnCards');
+            const btnCalendar = document.getElementById('tabBtnCalendar');
+
+            const secSchedule = document.getElementById('sectionSchedule');
+            const secCards = document.getElementById('sectionCards');
+            const secCalendar = document.getElementById('sectionCalendar');
+
+            const activeClass = "px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-indigo-600 text-white shadow-md shadow-indigo-500/20 whitespace-nowrap";
+            const inactiveClass = "px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 whitespace-nowrap";
+
+            secSchedule.classList.add('hidden');
+            secCards.classList.add('hidden');
+            secCalendar.classList.add('hidden');
+
+            btnSchedule.className = inactiveClass;
+            btnCards.className = inactiveClass;
+            btnCalendar.className = inactiveClass;
+
+            if (tab === 'schedule') {
+                secSchedule.classList.remove('hidden');
+                btnSchedule.className = activeClass;
+            } else if (tab === 'cards') {
+                secCards.classList.remove('hidden');
+                btnCards.className = activeClass;
+            } else if (tab === 'calendar') {
+                secCalendar.classList.remove('hidden');
+                btnCalendar.className = activeClass;
+                renderHistorySection();
+            }
+        }
+
+        window.renderApp = function() {
+            document.getElementById('globalLimitBadge').textContent = window.appData.globalLimit + '%';
+            renderStats();
+            renderWeekHeaderDates();
+            renderScheduleTable();
+            renderSubjectsList();
+            renderHistorySection();
+        };
+
+        function renderStats() {
+            const totalSubjects = window.appData.subjects.length;
+            document.getElementById('statTotalSubjects').textContent = totalSubjects;
+
+            let riskCount = 0;
+            let totalAbsencesSum = 0;
+
+            window.appData.subjects.forEach(sub => {
+                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit);
+                const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
+                const remainingHours = maxAbsencesAllowed - sub.absences;
+                
+                if (sub.absences >= maxAbsencesAllowed || remainingHours < 5.01) {
+                    riskCount++;
+                }
+                totalAbsencesSum += sub.absences;
+            });
+
+            document.getElementById('statRiskSubjects').textContent = riskCount;
+            document.getElementById('statTotalAbsences').textContent = totalAbsencesSum + ' h';
+        }
+
+        function getMondayOfWeek(d, offsetWeeks = 0) {
+            const date = new Date(d);
+            const day = date.getDay();
+            const diff = day === 0 ? -6 : 1 - day;
+            const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate() + diff + (offsetWeeks * 7));
+            monday.setHours(0, 0, 0, 0);
+            return monday;
+        }
+
+        function getDateOfWeekDay(dayIndex, offsetWeeks = 0) {
+            const monday = getMondayOfWeek(new Date(), offsetWeeks);
+            const targetDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + dayIndex);
+            return targetDate;
+        }
+
+        function formatDateKey(dateObj) {
+            const y = dateObj.getFullYear();
+            const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const d = String(dateObj.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        function changeWeek(delta) {
+            currentWeekOffset += delta;
+            renderWeekHeaderDates();
+            renderScheduleTable();
+        }
+
+        function resetToCurrentWeek() {
+            currentWeekOffset = 0;
+            renderWeekHeaderDates();
+            renderScheduleTable();
+        }
+
+        function renderWeekHeaderDates() {
+            const monday = getMondayOfWeek(new Date(), currentWeekOffset);
+            const friday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 4);
+
+            const formatShort = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
+            
+            let label = "";
+            if (currentWeekOffset === 0) {
+                label = `Semana Actual (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (currentWeekOffset === -1) {
+                label = `Semana Pasada (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (currentWeekOffset === 1) {
+                label = `Semana Siguiente (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (currentWeekOffset < -1) {
+                label = `Hace ${Math.abs(currentWeekOffset)} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else {
+                label = `En ${currentWeekOffset} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+            }
+
+            document.getElementById('currentWeekRangeLabel').textContent = label;
+
+            for (let i = 0; i < 5; i++) {
+                const d = getDateOfWeekDay(i, currentWeekOffset);
+                const dayEl = document.getElementById(`dayDate_${i}`);
+                if (dayEl) dayEl.textContent = `${d.getDate()} / ${d.getMonth() + 1}`;
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function renderScheduleTable() {
+            const tbody = document.getElementById('scheduleTableBody');
+            tbody.innerHTML = '';
+
+            if (window.appData.timeSlots.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="p-8 text-center text-slate-400 text-sm">
+                            No hay tramos horarios ni recreos configurados. Haz clic en "Añadir Hora / Recreo" para empezar.
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            window.appData.timeSlots.forEach((slot) => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 dark:border-slate-700/60";
+
+                let timeColumnHtml = `
+                    <td class="p-3 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap align-middle">
+                        <div class="flex items-center justify-between gap-1">
+                            <span class="truncate max-w-[100px]" title="${escapeHtml(slot.label)}">${escapeHtml(slot.label)}</span>
+                            ${isEditScheduleMode ? `
+                                <div class="flex items-center space-x-1 shrink-0">
+                                    <button onclick="openSlotModal('${slot.id}')" title="Editar hora" class="w-6 h-6 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-indigo-100 hover:text-indigo-600 flex items-center justify-center text-[10px]">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                    <button onclick="deleteTimeSlot('${slot.id}')" title="Eliminar hora" class="w-6 h-6 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-rose-100 hover:text-rose-600 flex items-center justify-center text-[10px]">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </td>
+                `;
+
+                if (slot.isBreak) {
+                    tr.innerHTML = timeColumnHtml + `
+                        <td colspan="5" class="p-2 text-center">
+                            <div class="w-full py-2.5 px-4 rounded-2xl bg-amber-50/80 dark:bg-amber-900/20 border border-amber-200/80 dark:border-amber-800/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-center justify-center space-x-2">
+                                <i class="fa-solid fa-mug-hot text-amber-500"></i>
+                                <span>${escapeHtml(slot.label)}</span>
+                            </div>
+                        </td>
+                    `;
+                } else {
+                    let daysCellsHtml = '';
+                    for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+                        const cellKey = `${dayIdx}_${slot.id}`;
+                        const subjectId = window.appData.schedule[cellKey];
+                        const subject = window.appData.subjects.find(s => s.id === subjectId);
+
+                        if (subject) {
+                            const dateObj = getDateOfWeekDay(dayIdx, currentWeekOffset);
+                            const dateStr = formatDateKey(dateObj);
+                            
+                            const isAbsent = window.appData.absenceLogs.some(l => 
+                                l.dateString === dateStr && 
+                                l.subjectId === subjectId && 
+                                l.slotLabel === slot.label
+                            );
+
+                            if (isAbsent && !isEditScheduleMode) {
+                                daysCellsHtml += `
+                                    <td class="p-2 text-center">
+                                        <button onclick="handleCellClick(${dayIdx}, '${slot.id}')" 
+                                            class="w-full h-16 p-2 rounded-2xl bg-rose-600 text-white border border-rose-700 text-xs font-semibold flex flex-col items-center justify-center transition active:scale-95 shadow-md hover:bg-rose-700">
+                                            <span class="truncate max-w-[110px] font-bold">${escapeHtml(subject.name)}</span>
+                                            <span class="text-[9px] bg-rose-800/80 text-white px-2 py-0.5 rounded-full mt-1 font-extrabold flex items-center gap-1">
+                                                <i class="fa-solid fa-circle-xmark"></i> FALTA
+                                            </span>
+                                        </button>
+                                    </td>
+                                `;
+                            } else {
+                                const colorClass = getSubjectColorClass(subject.id);
+                                daysCellsHtml += `
+                                    <td class="p-2 text-center">
+                                        <button onclick="handleCellClick(${dayIdx}, '${slot.id}')" 
+                                            class="w-full h-16 p-2 rounded-2xl border text-xs font-semibold flex flex-col items-center justify-center transition active:scale-95 shadow-sm hover:shadow ${colorClass} ${isEditScheduleMode ? 'ring-2 ring-indigo-500 ring-offset-1' : ''}">
+                                            <span class="truncate max-w-[110px] font-bold">${escapeHtml(subject.name)}</span>
+                                            <span class="text-[10px] opacity-80 mt-1">
+                                                <i class="fa-solid fa-clock text-[9px] mr-1"></i>${subject.absences}h faltadas
+                                            </span>
+                                        </button>
+                                    </td>
+                                `;
+                            }
+                        } else {
+                            daysCellsHtml += `
+                                <td class="p-2 text-center">
+                                    <button onclick="handleCellClick(${dayIdx}, '${slot.id}')" 
+                                        class="w-full h-16 p-2 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700/80 text-slate-300 dark:text-slate-600 text-xs font-medium hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-400 transition flex items-center justify-center">
+                                        ${isEditScheduleMode ? '<i class="fa-solid fa-plus mr-1"></i> Asignar' : '<span class="text-[11px] opacity-60">Sin clase</span>'}
+                                    </button>
+                                </td>
+                            `;
+                        }
+                    }
+
+                    tr.innerHTML = timeColumnHtml + daysCellsHtml;
+                }
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function getSubjectColorClass(id) {
+            const idx = window.appData.subjects.findIndex(s => s.id === id);
+            if (idx === -1) return "bg-slate-100 text-slate-700 border-slate-200";
+            return SUBJECT_COLORS[idx % SUBJECT_COLORS.length];
+        }
+
+        function toggleEditScheduleMode() {
+            isEditScheduleMode = !isEditScheduleMode;
+            const text = document.getElementById('editScheduleText');
+            const icon = document.getElementById('editScheduleIcon');
+            const btn = document.getElementById('editScheduleBtn');
+            const notice = document.getElementById('editScheduleNotice');
+
+            if (isEditScheduleMode) {
+                text.textContent = "Guardar y Salir de Edición";
+                icon.className = "fa-solid fa-check text-emerald-500";
+                btn.className = "px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition flex items-center space-x-1.5 shadow-md shadow-indigo-500/20";
+                notice.classList.remove('hidden');
+            } else {
+                text.textContent = "Editar Horario y Asignaciones";
+                icon.className = "fa-solid fa-pen text-indigo-500";
+                btn.className = "px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1.5";
+                notice.classList.add('hidden');
+            }
+
+            renderScheduleTable();
+        }
+
+        function handleCellClick(dayIdx, slotId) {
+            const cellKey = `${dayIdx}_${slotId}`;
+            
+            if (isEditScheduleMode) {
+                selectedCellForAssign = { dayIdx, slotId };
+                openAssignSlotModal();
+            } else {
+                const subjectId = window.appData.schedule[cellKey];
+                if (!subjectId) {
+                    showToast("No hay ninguna asignatura asignada a esta hora.", "warning");
+                    return;
+                }
+                const dateObj = getDateOfWeekDay(dayIdx, currentWeekOffset);
+                const dateStr = formatDateKey(dateObj);
+                const slot = window.appData.timeSlots.find(s => s.id === slotId);
+                const slotLabel = slot ? slot.label : '';
+
+                toggleAbsence(subjectId, dateStr, slotLabel);
+            }
+        }
+
+        function toggleAbsence(subjectId, dateStr, slotLabel) {
+            const sub = window.appData.subjects.find(s => s.id === subjectId);
+            if (!sub) return;
+
+            const existingLogIdx = window.appData.absenceLogs.findIndex(l => 
+                l.subjectId === subjectId && 
+                l.dateString === dateStr && 
+                l.slotLabel === slotLabel
+            );
+
+            if (existingLogIdx !== -1) {
+                const removedLog = window.appData.absenceLogs[existingLogIdx];
+                sub.absences = Math.max(0, sub.absences - (removedLog.hours || 1));
+                window.appData.absenceLogs.splice(existingLogIdx, 1);
+
+                saveToLocalStorage();
+                renderApp();
+                showToast(`Falta desmarcada en ${sub.name}`, 'info');
+            } else {
+                sub.absences += 1;
+                if (sub.absences > sub.totalHours) sub.absences = sub.totalHours;
+
+                window.appData.absenceLogs.push({
+                    id: 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+                    subjectId: subjectId,
+                    hours: 1,
+                    dateString: dateStr,
+                    slotLabel: slotLabel
+                });
+
+                saveToLocalStorage();
+                renderApp();
+
+                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit);
+                const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
+
+                if (sub.absences >= maxAbsencesAllowed) {
+                    showToast(`¡Alerta! Límite de faltas alcanzado en ${sub.name}`, 'danger');
+                } else {
+                    showToast(`Falta marcada (+1h) en ${sub.name}`, 'warning');
+                }
+            }
+        }
+
+        function markFullDayAbsence(dayIdx) {
+            const dayName = DAYS_NAMES[dayIdx];
+            const dateObj = getDateOfWeekDay(dayIdx, currentWeekOffset);
+            const dateStr = formatDateKey(dateObj);
+
+            const validSlots = [];
+            window.appData.timeSlots.forEach((slot) => {
+                if (!slot.isBreak) {
+                    const cellKey = `${dayIdx}_${slot.id}`;
+                    const subjectId = window.appData.schedule[cellKey];
+                    if (subjectId) {
+                        validSlots.push({ slot, subjectId });
+                    }
+                }
+            });
+
+            if (validSlots.length === 0) {
+                showToast(`El ${dayName} no tiene asignaturas en las horas lectivas.`, 'warning');
+                return;
+            }
+
+            const allMarked = validSlots.every(({ slot, subjectId }) => {
+                return window.appData.absenceLogs.some(l => 
+                    l.dateString === dateStr && 
+                    l.slotLabel === slot.label && 
+                    l.subjectId === subjectId
+                );
+            });
+
+            if (allMarked) {
+                validSlots.forEach(({ slot, subjectId }) => {
+                    const logIdx = window.appData.absenceLogs.findIndex(l => 
+                        l.dateString === dateStr && 
+                        l.slotLabel === slot.label && 
+                        l.subjectId === subjectId
+                    );
+                    if (logIdx !== -1) {
+                        const removed = window.appData.absenceLogs[logIdx];
+                        const sub = window.appData.subjects.find(s => s.id === subjectId);
+                        if (sub) {
+                            sub.absences = Math.max(0, sub.absences - (removed.hours || 1));
+                        }
+                        window.appData.absenceLogs.splice(logIdx, 1);
+                    }
+                });
+                saveToLocalStorage();
+                renderApp();
+                showToast(`Desmarcadas todas las faltas del ${dayName}`, 'info');
+            } else {
+                let addedCount = 0;
+                validSlots.forEach(({ slot, subjectId }) => {
+                    const isAlreadyMarked = window.appData.absenceLogs.some(l => 
+                        l.dateString === dateStr && 
+                        l.slotLabel === slot.label && 
+                        l.subjectId === subjectId
+                    );
+                    if (!isAlreadyMarked) {
+                        const sub = window.appData.subjects.find(s => s.id === subjectId);
+                        if (sub) {
+                            sub.absences += 1;
+                            if (sub.absences > sub.totalHours) sub.absences = sub.totalHours;
+
+                            window.appData.absenceLogs.push({
+                                id: 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+                                subjectId: sub.id,
+                                hours: 1,
+                                dateString: dateStr,
+                                slotLabel: slot.label
+                            });
+                            addedCount++;
+                        }
+                    }
+                });
+                saveToLocalStorage();
+                renderApp();
+                showToast(`Registradas las faltas del ${dayName} (${addedCount} clase/s)`, 'warning');
+            }
+        }
+
+        function openSlotModal(slotId = null) {
+            const modal = document.getElementById('timeSlotModal');
+            const title = document.getElementById('slotModalTitle');
+            const editId = document.getElementById('editSlotId');
+            const labelInput = document.getElementById('slotLabel');
+            const typeSelect = document.getElementById('slotType');
+
+            if (slotId) {
+                const slot = window.appData.timeSlots.find(s => s.id === slotId);
+                if (slot) {
+                    title.textContent = "Editar Tramo Horario";
+                    editId.value = slot.id;
+                    labelInput.value = slot.label;
+                    typeSelect.value = slot.isBreak ? "break" : "class";
+                }
+            } else {
+                title.textContent = "Añadir Tramo o Recreo";
+                editId.value = "";
+                labelInput.value = "";
+                typeSelect.value = "class";
+            }
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeSlotModal() {
+            document.getElementById('timeSlotModal').classList.add('hidden');
+        }
+
+        function handleSlotSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('editSlotId').value;
+            const label = document.getElementById('slotLabel').value.trim();
+            const type = document.getElementById('slotType').value;
+            const isBreak = type === "break";
+
+            if (!label) return;
+
+            if (id) {
+                const slot = window.appData.timeSlots.find(s => s.id === id);
+                if (slot) {
+                    slot.label = label;
+                    slot.isBreak = isBreak;
+                    showToast(`Tramo "${label}" actualizado`, 'success');
+                }
+            } else {
+                const newSlot = {
+                    id: 'slot_' + Date.now(),
+                    label: label,
+                    isBreak: isBreak
+                };
+                window.appData.timeSlots.push(newSlot);
+                showToast(`Tramo "${label}" añadido al horario`, 'success');
+            }
+
+            saveToLocalStorage();
+            closeSlotModal();
+            renderScheduleTable();
+        }
+
+        function deleteTimeSlot(slotId) {
+            const slot = window.appData.timeSlots.find(s => s.id === slotId);
+            if (slot && confirm(`¿Deseas eliminar el tramo "${slot.label}" del horario?`)) {
+                window.appData.timeSlots = window.appData.timeSlots.filter(s => s.id !== slotId);
+                
+                Object.keys(window.appData.schedule).forEach(key => {
+                    if (key.endsWith(`_${slotId}`)) {
+                        delete window.appData.schedule[key];
+                    }
+                });
+
+                saveToLocalStorage();
+                renderScheduleTable();
+                showToast(`Tramo eliminado`, 'warning');
+            }
+        }
+
+        function openAddSubjectModal() {
+            document.getElementById('modalTitle').textContent = "Añadir Nueva Asignatura";
+            document.getElementById('editSubjectId').value = "";
+            document.getElementById('subjectName').value = "";
+            document.getElementById('subjectTotalHours').value = "60";
+            document.getElementById('subjectLimit').value = "";
+            document.getElementById('subjectModal').classList.remove('hidden');
+        }
+
+        function openEditSubjectModal(id) {
+            const sub = window.appData.subjects.find(s => s.id === id);
+            if (sub) {
+                document.getElementById('modalTitle').textContent = "Editar Asignatura";
+                document.getElementById('editSubjectId').value = sub.id;
+                document.getElementById('subjectName').value = sub.name;
+                document.getElementById('subjectTotalHours').value = sub.totalHours;
+                document.getElementById('subjectLimit').value = sub.customLimit !== null && sub.customLimit !== undefined ? sub.customLimit : "";
+                document.getElementById('subjectModal').classList.remove('hidden');
+            }
+        }
+
+        function closeSubjectModal() {
+            document.getElementById('subjectModal').classList.add('hidden');
+        }
+
+        function handleSubjectSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('editSubjectId').value;
+            const name = document.getElementById('subjectName').value.trim();
+            const totalHours = parseInt(document.getElementById('subjectTotalHours').value, 10);
+            const limitVal = document.getElementById('subjectLimit').value;
+            const customLimit = limitVal !== "" ? parseFloat(limitVal) : null;
+
+            if (!name || isNaN(totalHours)) return;
+
+            if (id) {
+                const sub = window.appData.subjects.find(s => s.id === id);
+                if (sub) {
+                    sub.name = name;
+                    sub.totalHours = totalHours;
+                    sub.customLimit = customLimit;
+                    showToast(`Asignatura "${name}" actualizada`, 'success');
+                }
+            } else {
+                const newSub = {
+                    id: 'sub_' + Date.now(),
+                    name: name,
+                    totalHours: totalHours,
+                    absences: 0,
+                    customLimit: customLimit
+                };
+                window.appData.subjects.push(newSub);
+                showToast(`Asignatura "${name}" creada`, 'success');
+            }
+
+            saveToLocalStorage();
+            closeSubjectModal();
+            renderApp();
+        }
+
+        function deleteSubject(id) {
+            const sub = window.appData.subjects.find(s => s.id === id);
+            if (sub && confirm(`¿Estás seguro de que deseas eliminar la asignatura "${sub.name}"?`)) {
+                window.appData.subjects = window.appData.subjects.filter(s => s.id !== id);
+                
+                Object.keys(window.appData.schedule).forEach(key => {
+                    if (window.appData.schedule[key] === id) {
+                        delete window.appData.schedule[key];
+                    }
+                });
+
+                window.appData.absenceLogs = window.appData.absenceLogs.filter(l => l.subjectId !== id);
+
+                saveToLocalStorage();
+                renderApp();
+                showToast(`Asignatura "${sub.name}" eliminada`, 'warning');
+            }
+        }
+
+        function openAssignSlotModal() {
+            if (!selectedCellForAssign) return;
+            const list = document.getElementById('assignSlotList');
+            const subhead = document.getElementById('assignSlotSubhead');
+            
+            const dayName = DAYS_NAMES[selectedCellForAssign.dayIdx];
+            const slot = window.appData.timeSlots.find(s => s.id === selectedCellForAssign.slotId);
+            const slotName = slot ? slot.label : '';
+
+            subhead.textContent = `Selecciona la clase para el ${dayName} (${slotName}):`;
+            list.innerHTML = '';
+
+            const clearBtn = document.createElement('button');
+            clearBtn.className = "w-full text-left p-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-600 dark:text-rose-400 font-medium text-xs transition flex items-center justify-between";
+            clearBtn.innerHTML = `<span><i class="fa-solid fa-ban mr-2"></i>Dejar hora vacía</span>`;
+            clearBtn.onclick = () => assignSubjectToCell(null);
+            list.appendChild(clearBtn);
+
+            if (window.appData.subjects.length === 0) {
+                const emptyText = document.createElement('p');
+                emptyText.className = "text-xs text-slate-400 py-2 text-center";
+                emptyText.textContent = "Primero debes añadir asignaturas.";
+                list.appendChild(emptyText);
+            } else {
+                window.appData.subjects.forEach(sub => {
+                    const btn = document.createElement('button');
+                    btn.className = "w-full text-left p-3 rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:border-indigo-200 font-semibold text-xs transition flex items-center justify-between";
+                    btn.innerHTML = `
+                        <span class="text-slate-800 dark:text-slate-200">${escapeHtml(sub.name)}</span>
+                        <span class="text-[10px] text-slate-400">Total: ${sub.totalHours}h</span>
+                    `;
+                    btn.onclick = () => assignSubjectToCell(sub.id);
+                    list.appendChild(btn);
+                });
+            }
+
+            document.getElementById('assignSlotModal').classList.remove('hidden');
+        }
+
+        function closeAssignSlotModal() {
+            document.getElementById('assignSlotModal').classList.add('hidden');
+            selectedCellForAssign = null;
+        }
+
+        function assignSubjectToCell(subjectId) {
+            if (!selectedCellForAssign) return;
+            const cellKey = `${selectedCellForAssign.dayIdx}_${selectedCellForAssign.slotId}`;
+
+            if (subjectId === null) {
+                delete window.appData.schedule[cellKey];
+            } else {
+                window.appData.schedule[cellKey] = subjectId;
+            }
+
+            saveToLocalStorage();
+            closeAssignSlotModal();
+            renderScheduleTable();
+            showToast("Horario actualizado correctamente", "success");
+        }
+
+        function openSettingsModal() {
+            document.getElementById('globalLimitInput').value = window.appData.globalLimit;
+            document.getElementById('settingsModal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.add('hidden');
+        }
+
+        function handleSettingsSubmit(e) {
+            e.preventDefault();
+            const val = parseFloat(document.getElementById('globalLimitInput').value);
+            if (!isNaN(val) && val > 0 && val <= 100) {
+                window.appData.globalLimit = val;
+                saveToLocalStorage();
+                closeSettingsModal();
+                renderApp();
+                showToast("Límite global de faltas actualizado", "success");
+            }
+        }
+
+        function bgPrecisionClass(absences, maxAllowed) {
+            if (absences >= maxAllowed) return "bg-rose-500";
+            if ((maxAllowed - absences) < 5) return "bg-amber-500";
+            return "bg-indigo-600";
+        }
+
+        function renderSubjectsList() {
+            const container = document.getElementById('subjectsContainer');
+            const emptyState = document.getElementById('emptyState');
+            
+            container.innerHTML = '';
+
+            if (window.appData.subjects.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            } else {
+                emptyState.classList.add('hidden');
+            }
+
+            window.appData.subjects.forEach(sub => {
+                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit);
+                const maxAbsencesAllowedExact = (sub.totalHours * limitPct) / 100;
+                const maxAbsencesAllowedInt = Math.floor(maxAbsencesAllowedExact);
+                
+                const remainingHours = maxAbsencesAllowedExact - sub.absences;
+                const currentAbsencePct = sub.totalHours > 0 ? ((sub.absences / sub.totalHours) * 100).toFixed(1) : 0;
+
+                let statusColor = 'emerald';
+                if (sub.absences >= maxAbsencesAllowedExact) {
+                    statusColor = 'rose';
+                } else if (remainingHours < 5.01) {
+                    statusColor = 'amber';
+                }
+
+                const card = document.createElement('div');
+                card.className = "bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm flex flex-col justify-between transition hover:shadow-md";
+                
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-start justify-between mb-4">
+                            <div>
+                                <h3 class="font-bold text-lg text-slate-900 dark:text-white leading-snug">${escapeHtml(sub.name)}</h3>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    Límite: <span class="font-semibold text-slate-700 dark:text-slate-300">${limitPct}%</span> (Máx. ${maxAbsencesAllowedExact % 1 === 0 ? maxAbsencesAllowedInt : maxAbsencesAllowedExact.toFixed(1)} h)
+                                </p>
+                            </div>
+                            <div class="flex items-center space-x-1">
+                                <button onclick="openEditSubjectModal('${sub.id}')" title="Editar asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 transition flex items-center justify-center">
+                                    <i class="fa-solid fa-pen text-xs"></i>
+                                </button>
+                                <button onclick="deleteSubject('${sub.id}')" title="Eliminar asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center justify-center">
+                                    <i class="fa-solid fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 mb-5">
+                            <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-700/50 text-center">
+                                <span class="block text-xs font-medium text-slate-400 uppercase tracking-wider">Horas Faltadas</span>
+                                <span class="text-2xl font-extrabold text-rose-600 dark:text-rose-400">${sub.absences} h</span>
+                            </div>
+                            <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-700/50 text-center">
+                                <span class="block text-xs font-medium text-slate-400 uppercase tracking-wider">Total Materia</span>
+                                <span class="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">${sub.totalHours} h</span>
+                            </div>
+                        </div>
+
+                        <div class="mb-4 text-xs font-medium px-3 py-2.5 rounded-xl flex items-center space-x-2 
+                            ${statusColor === 'rose' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/30' : 
+                              statusColor === 'amber' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/30' : 
+                              'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/30'}">
+                            <i class="fa-solid ${statusColor === 'rose' ? 'fa-circle-exclamation' : statusColor === 'amber' ? 'fa-triangle-exclamation' : 'fa-circle-check'} text-sm shrink-0"></i>
+                            <span>${
+                                sub.absences >= maxAbsencesAllowedExact 
+                                    ? `Has superado el límite de faltas permitido.` 
+                                    : remainingHours < 5.01 
+                                        ? `¡Atención! Te quedan solo <strong>${remainingHours % 1 === 0 ? remainingHours : remainingHours.toFixed(1)} h</strong> para pasar el límite.` 
+                                        : `Te quedan <strong>${remainingHours % 1 === 0 ? remainingHours : remainingHours.toFixed(1)} h</strong> antes de exceder el límite.`
+                            }</span>
+                        </div>
+
+                        <div class="space-y-1.5 mb-2">
+                            <div class="flex justify-between text-xs text-slate-500 dark:text-slate-400">
+                                <span>Progreso de faltas: <strong>${currentAbsencePct}%</strong></span>
+                                <span>Límite: ${limitPct}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                                <div class="${bgPrecisionClass(sub.absences, maxAbsencesAllowedExact)} h-full rounded-full transition-all duration-300" style="width: ${Math.min(100, currentAbsencePct)}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function changeHistoryWeek(delta) {
+            historyWeekOffset += delta;
+            renderHistorySection();
+        }
+
+        function resetHistoryToCurrentWeek() {
+            historyWeekOffset = 0;
+            renderHistorySection();
+        }
+
+        function renderHistorySection() {
+            renderHistoryHeaderDates();
+            renderHistoryWeeklyTable();
+            renderHistoryLogsList();
+        }
+
+        function renderHistoryHeaderDates() {
+            const monday = getMondayOfWeek(new Date(), historyWeekOffset);
+            const friday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 4);
+
+            const formatShort = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
+            
+            let label = "";
+            if (historyWeekOffset === 0) {
+                label = `Semana Actual (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (historyWeekOffset === -1) {
+                label = `Semana Pasada (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (historyWeekOffset === 1) {
+                label = `Semana Siguiente (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else if (historyWeekOffset < -1) {
+                label = `Hace ${Math.abs(historyWeekOffset)} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+            } else {
+                label = `En ${historyWeekOffset} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+            }
+
+            const labelEl = document.getElementById('historyWeekRangeLabel');
+            if (labelEl) labelEl.textContent = label;
+
+            for (let i = 0; i < 5; i++) {
+                const d = getDateOfWeekDay(i, historyWeekOffset);
+                const dayEl = document.getElementById(`historyDayDate_${i}`);
+                if (dayEl) dayEl.textContent = `${d.getDate()} / ${d.getMonth() + 1}`;
+            }
+        }
+
+        function renderHistoryWeeklyTable() {
+            const tbody = document.getElementById('historyWeeklyTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            if (window.appData.timeSlots.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 text-xs">No hay tramos cargados</td></tr>`;
+                return;
+            }
+
+            window.appData.timeSlots.forEach((slot) => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 dark:border-slate-700/60";
+
+                let timeCol = `
+                    <td class="p-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        ${escapeHtml(slot.label)}
+                    </td>
+                `;
+
+                if (slot.isBreak) {
+                    tr.innerHTML = timeCol + `
+                        <td colspan="5" class="p-2 text-center">
+                            <div class="w-full py-1.5 rounded-xl bg-amber-50/60 dark:bg-amber-900/10 text-amber-600 dark:text-amber-400 text-[11px] font-medium">
+                                Descanso
+                            </div>
+                        </td>
+                    `;
+                } else {
+                    let daysCells = '';
+                    for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+                        const dateObj = getDateOfWeekDay(dayIdx, historyWeekOffset);
+                        const dateStr = formatDateKey(dateObj);
+                        
+                        const logsInSlot = window.appData.absenceLogs.filter(l => 
+                            l.dateString === dateStr && l.slotLabel === slot.label
+                        );
+
+                        if (logsInSlot.length > 0) {
+                            const names = logsInSlot.map(l => {
+                                const sub = window.appData.subjects.find(s => s.id === l.subjectId);
+                                return sub ? sub.name : 'Asignatura borrada';
+                            }).join(', ');
+
+                            daysCells += `
+                                <td class="p-1.5 text-center">
+                                    <div class="p-2 rounded-xl bg-rose-500 text-white text-[10px] font-bold shadow-sm">
+                                        <div class="truncate max-w-[90px] mx-auto">${escapeHtml(names)}</div>
+                                        <div class="text-[9px] opacity-80 mt-0.5"><i class="fa-solid fa-circle-xmark"></i> Falta</div>
+                                    </div>
+                                </td>
+                            `;
+                        } else {
+                            daysCells += `
+                                <td class="p-1.5 text-center">
+                                    <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-900/30 text-slate-300 dark:text-slate-600 text-[10px]">
+                                        -
+                                    </div>
+                                </td>
+                            `;
+                        }
+                    }
+                    tr.innerHTML = timeCol + daysCells;
+                }
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderHistoryLogsList() {
+            const container = document.getElementById('historyLogsList');
+            if (!container) return;
+            container.innerHTML = '';
+
+            if (window.appData.absenceLogs.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-slate-400 text-xs">
+                        <i class="fa-solid fa-clipboard-check text-2xl mb-2 text-slate-300 dark:text-slate-600 block"></i>
+                        No hay ninguna falta registrada aún.
+                    </div>
+                `;
+                return;
+            }
+
+            const sortedLogs = [...window.appData.absenceLogs].sort((a, b) => b.dateString.localeCompare(a.dateString));
+
+            sortedLogs.forEach(log => {
+                const sub = window.appData.subjects.find(s => s.id === log.subjectId);
+                const subName = sub ? sub.name : 'Asignatura eliminada';
+                
+                const parts = log.dateString.split('-');
+                const formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+
+                const item = document.createElement('div');
+                item.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700/50 flex items-center justify-between text-xs";
+                item.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300 flex items-center justify-center font-bold">
+                            <i class="fa-solid fa-user-xmark"></i>
+                        </div>
+                        <div>
+                            <p class="font-bold text-slate-800 dark:text-slate-200">${escapeHtml(subName)}</p>
+                            <p class="text-[10px] text-slate-400">${formattedDate} • ${escapeHtml(log.slotLabel || 'Hora especificada')}</p>
+                        </div>
+                    </div>
+                    <span class="px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 font-extrabold text-[10px]">
+                        -1h
+                    </span>
+                `;
+                container.appendChild(item);
+            });
+        }
+    </script>
+</body>
+
+</html>
