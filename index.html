@@ -1596,76 +1596,80 @@
                 const maxAbsencesAllowedExact = (sub.totalHours * limitPct) / 100;
                 const maxAbsencesAllowedInt = Math.floor(maxAbsencesAllowedExact);
                 
-                const remainingHours = maxAbsencesAllowedExact - sub.absences;
+                const remainingHours = (maxAbsencesAllowedExact - sub.absences).toFixed(1);
                 const currentAbsencePct = sub.totalHours > 0 ? ((sub.absences / sub.totalHours) * 100).toFixed(1) : 0;
+                const progressPct = Math.min(100, (sub.absences / maxAbsencesAllowedExact) * 100);
 
-                let statusColor = 'emerald';
+                let badgeHtml = '';
                 if (sub.absences >= maxAbsencesAllowedExact) {
-                    statusColor = 'rose';
+                    badgeHtml = `<span class="bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300 text-xs font-bold px-2.5 py-1 rounded-full"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Límite superado</span>`;
                 } else if (remainingHours < 5.01) {
-                    statusColor = 'amber';
+                    badgeHtml = `<span class="bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full"><i class="fa-solid fa-circle-exclamation mr-1"></i>Riesgo</span>`;
+                } else {
+                    badgeHtml = `<span class="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 text-xs font-bold px-2.5 py-1 rounded-full"><i class="fa-solid fa-circle-check mr-1"></i>En regla</span>`;
                 }
 
                 const card = document.createElement('div');
-                card.className = "bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm flex flex-col justify-between transition hover:shadow-md";
+                card.className = "bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between";
                 
                 card.innerHTML = `
                     <div>
-                        <div class="flex items-start justify-between mb-4">
-                            <div>
-                                <h3 class="font-bold text-lg text-slate-900 dark:text-white leading-snug">${escapeHtml(sub.name)}</h3>
-                                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                                    Límite: <span class="font-semibold text-slate-700 dark:text-slate-300">${limitPct}%</span> (Máx. ${maxAbsencesAllowedExact % 1 === 0 ? maxAbsencesAllowedInt : maxAbsencesAllowedExact.toFixed(1)} h)
-                                </p>
-                            </div>
-                            <div class="flex items-center space-x-1">
-                                <button onclick="openEditSubjectModal('${sub.id}')" title="Editar asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 transition flex items-center justify-center">
-                                    <i class="fa-solid fa-pen text-xs"></i>
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <h3 class="font-bold text-lg text-slate-800 dark:text-slate-100 truncate">${escapeHtml(sub.name)}</h3>
+                            <div class="flex items-center space-x-1 shrink-0">
+                                <button onclick="openEditSubjectModal('${sub.id}')" title="Editar Asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-indigo-100 hover:text-indigo-600 text-slate-500 transition flex items-center justify-center text-xs">
+                                    <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button onclick="deleteSubject('${sub.id}')" title="Eliminar asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition flex items-center justify-center">
-                                    <i class="fa-solid fa-trash text-xs"></i>
+                                <button onclick="deleteSubject('${sub.id}')" title="Eliminar Asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-rose-100 hover:text-rose-600 text-slate-500 transition flex items-center justify-center text-xs">
+                                    <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-3 mb-5">
-                            <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-700/50 text-center">
-                                <span class="block text-xs font-medium text-slate-400 uppercase tracking-wider">Horas Faltadas</span>
-                                <span class="text-2xl font-extrabold text-rose-600 dark:text-rose-400">${sub.absences} h</span>
-                            </div>
-                            <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-700/50 text-center">
-                                <span class="block text-xs font-medium text-slate-400 uppercase tracking-wider">Total Materia</span>
-                                <span class="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">${sub.totalHours} h</span>
-                            </div>
+                        <div class="flex items-center justify-between mb-4">
+                            ${badgeHtml}
+                            <span class="text-xs text-slate-400 font-medium">Límite: ${limitPct}% (${maxAbsencesAllowedInt}h)</span>
                         </div>
 
-                        <div class="mb-4 text-xs font-medium px-3 py-2.5 rounded-xl flex items-center space-x-2 
-                            ${statusColor === 'rose' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/30' : 
-                              statusColor === 'amber' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/30' : 
-                              'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/30'}">
-                            <i class="fa-solid ${statusColor === 'rose' ? 'fa-circle-exclamation' : statusColor === 'amber' ? 'fa-triangle-exclamation' : 'fa-circle-check'} text-sm shrink-0"></i>
-                            <span>${
-                                sub.absences >= maxAbsencesAllowedExact 
-                                    ? `Has superado el límite de faltas permitido.` 
-                                    : remainingHours < 5.01 
-                                        ? `¡Atención! Te quedan solo <strong>${remainingHours % 1 === 0 ? remainingHours : remainingHours.toFixed(1)} h</strong> para pasar el límite.` 
-                                        : `Te quedan <strong>${remainingHours % 1 === 0 ? remainingHours : remainingHours.toFixed(1)} h</strong> antes de exceder el límite.`
-                            }</span>
-                        </div>
-
-                        <div class="space-y-1.5 mb-2">
-                            <div class="flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                                <span>Progreso de faltas: <strong>${currentAbsencePct}%</strong></span>
-                                <span>Límite: ${limitPct}%</span>
+                        <div class="space-y-2 mb-4">
+                            <div class="flex justify-between text-xs font-medium">
+                                <span class="text-slate-500 dark:text-slate-400">Horas faltadas</span>
+                                <span class="font-bold">${sub.absences} / ${sub.totalHours}h (${currentAbsencePct}%)</span>
                             </div>
-                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                                <div class="${bgPrecisionClass(sub.absences, maxAbsencesAllowedExact)} h-full rounded-full transition-all duration-300" style="width: ${Math.min(100, currentAbsencePct)}%"></div>
+                            <div class="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                                <div class="h-2.5 rounded-full ${bgPrecisionClass(sub.absences, maxAbsencesAllowedExact)} transition-all duration-300" style="width: ${progressPct}%"></div>
                             </div>
                         </div>
                     </div>
+
+                    <div class="pt-4 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                        <span class="text-xs text-slate-500 dark:text-slate-400">
+                            Margen: <strong class="${remainingHours < 0 ? 'text-rose-500' : 'text-slate-700 dark:text-slate-200'}">${remainingHours}h restantes</strong>
+                        </span>
+                        <div class="flex items-center space-x-1">
+                            <button onclick="manualAdjustAbsence('${sub.id}', -1)" title="Restar 1h" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold text-slate-700 dark:text-slate-200 transition flex items-center justify-center text-sm">-</button>
+                            <button onclick="manualAdjustAbsence('${sub.id}', 1)" title="Sumar 1h" class="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 font-bold text-white transition flex items-center justify-center text-sm">+</button>
+                        </div>
+                    </div>
                 `;
+
                 container.appendChild(card);
             });
+        }
+
+        function manualAdjustAbsence(subjectId, delta) {
+            const sub = window.appData.subjects.find(s => s.id === subjectId);
+            if (!sub) return;
+
+            if (delta < 0 && sub.absences > 0) {
+                sub.absences = Math.max(0, sub.absences - 1);
+                showToast(`Se ha restado 1h a ${sub.name}`, 'info');
+            } else if (delta > 0) {
+                sub.absences = Math.min(sub.totalHours, sub.absences + 1);
+                showToast(`Se ha añadido 1h a ${sub.name}`, 'warning');
+            }
+            saveToLocalStorage();
+            renderApp();
         }
 
         function changeHistoryWeek(delta) {
@@ -1679,17 +1683,10 @@
         }
 
         function renderHistorySection() {
-            renderHistoryHeaderDates();
-            renderHistoryWeeklyTable();
-            renderHistoryLogsList();
-        }
-
-        function renderHistoryHeaderDates() {
             const monday = getMondayOfWeek(new Date(), historyWeekOffset);
             const friday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 4);
-
             const formatShort = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
-            
+
             let label = "";
             if (historyWeekOffset === 0) {
                 label = `Semana Actual (${formatShort(monday)} al ${formatShort(friday)})`;
@@ -1697,134 +1694,82 @@
                 label = `Semana Pasada (${formatShort(monday)} al ${formatShort(friday)})`;
             } else if (historyWeekOffset === 1) {
                 label = `Semana Siguiente (${formatShort(monday)} al ${formatShort(friday)})`;
-            } else if (historyWeekOffset < -1) {
-                label = `Hace ${Math.abs(historyWeekOffset)} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
             } else {
-                label = `En ${historyWeekOffset} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+                label = `Semana (${formatShort(monday)} al ${formatShort(friday)})`;
             }
 
-            const labelEl = document.getElementById('historyWeekRangeLabel');
-            if (labelEl) labelEl.textContent = label;
+            document.getElementById('historyWeekRangeLabel').textContent = label;
 
             for (let i = 0; i < 5; i++) {
                 const d = getDateOfWeekDay(i, historyWeekOffset);
-                const dayEl = document.getElementById(`historyDayDate_${i}`);
-                if (dayEl) dayEl.textContent = `${d.getDate()} / ${d.getMonth() + 1}`;
+                const el = document.getElementById(`historyDayDate_${i}`);
+                if (el) el.textContent = `${d.getDate()}/${d.getMonth() + 1}`;
             }
-        }
 
-        function renderHistoryWeeklyTable() {
+            // Generar tabla del historial
             const tbody = document.getElementById('historyWeeklyTableBody');
-            if (!tbody) return;
             tbody.innerHTML = '';
 
-            if (window.appData.timeSlots.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 text-xs">No hay tramos cargados</td></tr>`;
-                return;
-            }
-
-            window.appData.timeSlots.forEach((slot) => {
+            window.appData.timeSlots.forEach(slot => {
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 dark:border-slate-700/60";
 
-                let timeCol = `
-                    <td class="p-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        ${escapeHtml(slot.label)}
-                    </td>
-                `;
+                let html = `<td class="p-2 text-xs font-semibold text-slate-500 dark:text-slate-400">${escapeHtml(slot.label)}</td>`;
 
                 if (slot.isBreak) {
-                    tr.innerHTML = timeCol + `
-                        <td colspan="5" class="p-2 text-center">
-                            <div class="w-full py-1.5 rounded-xl bg-amber-50/60 dark:bg-amber-900/10 text-amber-600 dark:text-amber-400 text-[11px] font-medium">
-                                Descanso
-                            </div>
-                        </td>
-                    `;
+                    html += `<td colspan="5" class="p-2 text-center text-xs text-amber-600 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-900/10 rounded-lg">Recreo</td>`;
                 } else {
-                    let daysCells = '';
                     for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
                         const dateObj = getDateOfWeekDay(dayIdx, historyWeekOffset);
                         const dateStr = formatDateKey(dateObj);
                         
-                        const logsInSlot = window.appData.absenceLogs.filter(l => 
-                            l.dateString === dateStr && l.slotLabel === slot.label
-                        );
-
-                        if (logsInSlot.length > 0) {
-                            const names = logsInSlot.map(l => {
-                                const sub = window.appData.subjects.find(s => s.id === l.subjectId);
-                                return sub ? sub.name : 'Asignatura borrada';
-                            }).join(', ');
-
-                            daysCells += `
+                        const log = window.appData.absenceLogs.find(l => l.dateString === dateStr && l.slotLabel === slot.label);
+                        if (log) {
+                            const sub = window.appData.subjects.find(s => s.id === log.subjectId);
+                            const name = sub ? sub.name : 'Asignatura';
+                            html += `
                                 <td class="p-1.5 text-center">
-                                    <div class="p-2 rounded-xl bg-rose-500 text-white text-[10px] font-bold shadow-sm">
-                                        <div class="truncate max-w-[90px] mx-auto">${escapeHtml(names)}</div>
-                                        <div class="text-[9px] opacity-80 mt-0.5"><i class="fa-solid fa-circle-xmark"></i> Falta</div>
+                                    <div class="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 p-1.5 rounded-xl text-[11px] font-bold border border-rose-200 dark:border-rose-800">
+                                        ${escapeHtml(name)}
                                     </div>
                                 </td>
                             `;
                         } else {
-                            daysCells += `
-                                <td class="p-1.5 text-center">
-                                    <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-900/30 text-slate-300 dark:text-slate-600 text-[10px]">
-                                        -
-                                    </div>
-                                </td>
-                            `;
+                            html += `<td class="p-1.5 text-center text-slate-300 dark:text-slate-700 text-xs">-</td>`;
                         }
                     }
-                    tr.innerHTML = timeCol + daysCells;
                 }
+
+                tr.innerHTML = html;
                 tbody.appendChild(tr);
             });
-        }
 
-        function renderHistoryLogsList() {
-            const container = document.getElementById('historyLogsList');
-            if (!container) return;
-            container.innerHTML = '';
+            // Lista de registros de auditoría/logs
+            const logsList = document.getElementById('historyLogsList');
+            logsList.innerHTML = '';
 
             if (window.appData.absenceLogs.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center py-8 text-slate-400 text-xs">
-                        <i class="fa-solid fa-clipboard-check text-2xl mb-2 text-slate-300 dark:text-slate-600 block"></i>
-                        No hay ninguna falta registrada aún.
-                    </div>
-                `;
+                logsList.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">No hay registros de faltas guardados.</p>`;
                 return;
             }
 
-            const sortedLogs = [...window.appData.absenceLogs].sort((a, b) => b.dateString.localeCompare(a.dateString));
-
+            const sortedLogs = [...window.appData.absenceLogs].reverse();
             sortedLogs.forEach(log => {
                 const sub = window.appData.subjects.find(s => s.id === log.subjectId);
                 const subName = sub ? sub.name : 'Asignatura eliminada';
-                
-                const parts = log.dateString.split('-');
-                const formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
 
-                const item = document.createElement('div');
-                item.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700/50 flex items-center justify-between text-xs";
-                item.innerHTML = `
-                    <div class="flex items-center space-x-3">
-                        <div class="w-8 h-8 rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-300 flex items-center justify-center font-bold">
-                            <i class="fa-solid fa-user-xmark"></i>
-                        </div>
-                        <div>
-                            <p class="font-bold text-slate-800 dark:text-slate-200">${escapeHtml(subName)}</p>
-                            <p class="text-[10px] text-slate-400">${formattedDate} • ${escapeHtml(log.slotLabel || 'Hora especificada')}</p>
-                        </div>
+                const div = document.createElement('div');
+                div.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs";
+                div.innerHTML = `
+                    <div>
+                        <div class="font-bold text-slate-800 dark:text-slate-200">${escapeHtml(subName)}</div>
+                        <div class="text-[10px] text-slate-400">${log.dateString} (${log.slotLabel || 'Manual'})</div>
                     </div>
-                    <span class="px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 font-extrabold text-[10px]">
-                        -1h
-                    </span>
+                    <span class="bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300 font-bold px-2 py-0.5 rounded-full text-[10px]">+${log.hours || 1}h</span>
                 `;
-                container.appendChild(item);
+                logsList.appendChild(div);
             });
         }
     </script>
 </body>
-
 </html>
