@@ -111,15 +111,21 @@
           color: #0f172a;
         }
     </style>
-    <script type="module">
-  // Import the functions you need from the SDKs you need
+<script type="module">
+  // Importar los servicios necesarios de Firebase SDK v12
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
   import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
+  import { 
+    getAuth, 
+    signInWithEmailAndPassword, 
+    createUserWithEmailAndPassword, 
+    GoogleAuthProvider, 
+    signInWithPopup, 
+    signOut,
+    onAuthStateChanged 
+  } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  // Configuración de Firebase
   const firebaseConfig = {
     apiKey: "AIzaSyBapjfSE61etzDjye-bFN5x6XcP_5s1nTo",
     authDomain: "control-faltas-26.firebaseapp.com",
@@ -130,9 +136,84 @@
     measurementId: "G-9REG1X986N"
   };
 
-  // Initialize Firebase
+  // Inicialización
   const app = initializeApp(firebaseConfig);
   const analytics = getAnalytics(app);
+  const auth = getAuth(app);
+
+  // Escuchar el estado de autenticación de usuario
+  onAuthStateChanged(auth, (user) => {
+    const authContainer = document.getElementById('auth-container');
+    const mainContent = document.getElementById('main-content');
+    const userInfoBar = document.getElementById('user-info-bar');
+    const userEmailDisplay = document.getElementById('user-email-display');
+
+    if (user) {
+      if (authContainer) authContainer.classList.add('hidden');
+      if (mainContent) mainContent.classList.remove('hidden');
+      if (userInfoBar) userInfoBar.classList.remove('hidden');
+      if (userEmailDisplay) userEmailDisplay.textContent = user.email || user.displayName;
+    } else {
+      if (authContainer) authContainer.classList.remove('hidden');
+      if (mainContent) mainContent.classList.add('hidden');
+      if (userInfoBar) userInfoBar.classList.add('hidden');
+    }
+  });
+
+  // Exponer las funciones globalmente en `window` para que funcionen con los atributos `onclick` del HTML
+
+  window.iniciarSesion = async (username, password) => {
+    if (!username || !password) {
+      if (window.showToast) window.showToast('Por favor, introduce usuario y contraseña.', 'warning');
+      return;
+    }
+    // Si usas correo electrónico en lugar de nombre de usuario:
+    const email = username.includes('@') ? username : `${username}@controlfaltas.com`;
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      if (window.showToast) window.showToast('Sesión iniciada correctamente', 'success');
+    } catch (error) {
+      console.error(error);
+      if (window.showToast) window.showToast('Error al iniciar sesión: ' + error.message, 'danger');
+    }
+  };
+
+  window.registrarUsuario = async (username, password) => {
+    if (!username || !password) {
+      if (window.showToast) window.showToast('Introduce un usuario y contraseña válidos.', 'warning');
+      return;
+    }
+    const email = username.includes('@') ? username : `${username}@controlfaltas.com`;
+
+    try {
+      await createUserWithEmailAndPassword(auth, email, password);
+      if (window.showToast) window.showToast('Cuenta creada con éxito', 'success');
+    } catch (error) {
+      console.error(error);
+      if (window.showToast) window.showToast('Error al crear la cuenta: ' + error.message, 'danger');
+    }
+  };
+
+  window.loginWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      if (window.showToast) window.showToast('Sesión iniciada con Google', 'success');
+    } catch (error) {
+      console.error(error);
+      if (window.showToast) window.showToast('Error con el acceso de Google: ' + error.message, 'danger');
+    }
+  };
+
+  window.logoutUser = async () => {
+    try {
+      await signOut(auth);
+      if (window.showToast) window.showToast('Sesión cerrada', 'info');
+    } catch (error) {
+      console.error(error);
+    }
+  };
 </script>
 </head>
 
