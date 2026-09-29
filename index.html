@@ -38,7 +38,6 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
 
-        /* Botón flotante abajo a la derecha */
         .floating-info-btn {
           position: fixed;
           bottom: 24px;
@@ -63,7 +62,6 @@
           background-color: #1d4ed8;
         }
 
-        /* Modal / Ventana emergente */
         .modal-overlay {
           position: fixed;
           top: 0;
@@ -113,7 +111,6 @@
         }
     </style>
 <script type="module">
-  // Importar los servicios necesarios de Firebase SDK v12
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
   import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
   import { 
@@ -126,7 +123,6 @@
     onAuthStateChanged 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
   
-  // SE IMPORTA REALTIME DATABASE EN LUGAR DE FIRESTORE
   import { 
     getDatabase, 
     ref, 
@@ -135,11 +131,10 @@
     off 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
-// Configuración de Firebase
   const firebaseConfig = {
     apiKey: "AIzaSyBapjfSE61etzDjye-bFN5x6XcP_5s1nTo",
     authDomain: "control-faltas-26.firebaseapp.com",
-    databaseURL: "https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app", // <--- Poner esta URL exacta
+    databaseURL: "https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app",
     projectId: "control-faltas-26",
     storageBucket: "control-faltas-26.firebasestorage.app",
     messagingSenderId: "1036495041102",
@@ -147,7 +142,6 @@
     measurementId: "G-9REG1X986N"
   };
 
-  // Inicialización
   const app = initializeApp(firebaseConfig);
   const analytics = getAnalytics(app);
   const auth = getAuth(app);
@@ -155,9 +149,8 @@
 
   let currentUser = null;
   let userDbRef = null;
-  let isRemoteUpdate = false; // Evita bucles al recibir datos de la nube
+  let isRemoteUpdate = false;
 
-  // Escuchar el estado de autenticación de usuario
   onAuthStateChanged(auth, (user) => {
     currentUser = user;
     const authContainer = document.getElementById('auth-container');
@@ -173,11 +166,10 @@
       if (userEmailDisplay) userEmailDisplay.textContent = user.displayName || (user.email ? user.email.split('@')[0] : 'Usuario');
       if (proximasClasesSection) proximasClasesSection.classList.remove('hidden');
 
-      // Escuchar cambios en tiempo real en la Realtime Database
       listenToCloudData(user.uid);
     } else {
       if (userDbRef) {
-        off(userDbRef); // Detener escucha al cerrar sesión
+        off(userDbRef);
         userDbRef = null;
       }
       if (authContainer) authContainer.classList.remove('hidden');
@@ -187,7 +179,6 @@
     }
   });
 
-  // Escuchador en Tiempo Real de Realtime Database
   function listenToCloudData(uid) {
     userDbRef = ref(db, 'users/' + uid + '/appData');
     
@@ -196,11 +187,16 @@
       if (data) {
         isRemoteUpdate = true;
         window.appData = data;
+        if (!window.appData.timeSlots || window.appData.timeSlots.length === 0) {
+            window.appData.timeSlots = window.getDefaultTimeSlots ? window.getDefaultTimeSlots() : [];
+        }
         localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
         if (window.renderApp) window.renderApp(false);
         isRemoteUpdate = false;
       } else {
-        // Si no existen datos guardados en la nube, guarda el estado local actual
+        if (!window.appData || !window.appData.timeSlots || window.appData.timeSlots.length === 0) {
+            if (window.loadFromLocalStorage) window.loadFromLocalStorage();
+        }
         window.saveDataToCloud(window.appData);
       }
     }, (error) => {
@@ -208,7 +204,6 @@
     });
   }
 
-  // Guardar datos en la nube (Realtime Database)
   window.saveDataToCloud = async (data) => {
     if (!currentUser || isRemoteUpdate) return;
     try {
@@ -219,7 +214,6 @@
     }
   };
 
-  // Funciones globales de autenticación
   window.iniciarSesion = async (username, password) => {
     if (!username || !password) {
       if (window.showToast) window.showToast('Por favor, introduce usuario y contraseña.', 'warning');
@@ -276,7 +270,6 @@
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
 
-    <!-- Header -->
     <header class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30 shadow-sm">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
@@ -288,14 +281,12 @@
             </div>
             
             <div class="flex items-center space-x-3">
-                <!-- User account dropdown menu -->
                 <div id="user-info-bar" class="relative hidden sm:block">
                     <button onclick="toggleUserDropdown()" class="flex items-center space-x-2 bg-slate-100 dark:bg-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-xl border border-slate-200/60 dark:border-slate-600/40 transition">
                         <i class="fa-solid fa-circle-user text-blue-500 text-base"></i>
                         <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
                     </button>
 
-                    <!-- Dropdown Content -->
                     <div id="userDropdownMenu" class="hidden absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700 py-2 z-50">
                         <div class="px-4 py-2 border-b border-slate-100 dark:border-slate-700">
                             <p class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sesión iniciada como</p>
@@ -308,14 +299,12 @@
                     </div>
                 </div>
 
-                <!-- Global Limit Button (Se oculta el badge con la clase 'hidden') -->
                 <button onclick="openSettingsModal()" class="inline-flex items-center space-x-2 text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-xl transition font-medium">
                     <i class="fa-solid fa-gear text-blue-500"></i>
                     <span class="hidden sm:inline">Configurar Límite</span>
                     <span id="globalLimitBadge" class="hidden bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">15%</span>
                 </button>
 
-                <!-- Theme Toggle Button -->
                 <button onclick="toggleDarkMode()" class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
                     <i id="themeIcon" class="fa-solid fa-moon"></i>
                 </button>
@@ -326,11 +315,9 @@
     <section id="proximas-clases-section" class="proximas-clases-container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 w-full hidden">
       <h2 class="text-lg font-bold">Próximas Clases</h2>
       <div id="contenedor-proximas" class="tarjetas-clases grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
-        <!-- Las clases se cargarán dinámicamente aquí -->
       </div>
     </section>
 
-    <!-- Modal / Pantalla de Autenticación Elegante -->
     <div id="auth-container" class="my-auto px-4 py-8 max-w-md w-full mx-auto">
         <div class="bg-white dark:bg-slate-800 rounded-3xl p-8 border border-slate-200 dark:border-slate-700 shadow-xl text-center space-y-6">
             <div class="w-16 h-16 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner">
@@ -341,7 +328,6 @@
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Inicia sesión o regístrate para sincronizar tu horario en la nube.</p>
             </div>
 
-            <!-- Formulario con Nombre de Usuario -->
             <div class="space-y-3.5 text-left">
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Nombre de usuario</label>
@@ -380,10 +366,8 @@
         </div>
     </div>
 
-    <!-- Contenido Principal de la Aplicación -->
     <main id="main-content" class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 hidden">
         
-        <!-- Stats Summary Banner -->
         <div id="stats-summary" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center space-x-4">
                 <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xl font-bold">
@@ -416,7 +400,6 @@
             </div>
         </div>
 
-        <!-- Navigation Tabs Primarias -->
         <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 mb-6 pb-2 gap-3">
             <div class="flex space-x-2 overflow-x-auto min-w-0 pr-2">
                 <button id="tabBtnSchedule" onclick="switchMainTab('schedule')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-blue-600 text-white shadow-md shadow-blue-500/20 shrink-0">
@@ -429,14 +412,12 @@
                 </button>
             </div>
 
-            <!-- Global Action (Add subject) -->
             <button onclick="openAddSubjectModal()" class="inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-xl text-sm shadow-md transition active:scale-95 shrink-0">
                 <i class="fa-solid fa-plus"></i>
                 <span class="hidden sm:inline">Nueva Asignatura</span>
             </button>
         </div>
 
-        <!-- SECTION 1: HORARIO ESCOLAR -->
         <div id="sectionSchedule" class="space-y-6">
             <div class="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                 
@@ -460,7 +441,6 @@
                     </div>
                 </div>
 
-                <!-- Mode Indicator Banner -->
                 <div id="editScheduleNotice" class="hidden mb-4 p-3 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between">
                     <span class="flex items-center">
                         <i class="fa-solid fa-circle-info mr-2 text-amber-500"></i>
@@ -469,7 +449,6 @@
                     <button onclick="toggleEditScheduleMode()" class="font-bold underline text-xs ml-2">Finalizar edición</button>
                 </div>
 
-                <!-- Timetable Grid Wrapper -->
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse min-w-[700px]">
                         <thead>
@@ -483,17 +462,14 @@
                             </tr>
                         </thead>
                         <tbody id="scheduleTableBody">
-                            <!-- Filas dinámicas -->
                         </tbody>
                     </table>
                 </div>
             </div>
         </div>
 
-        <!-- SECTION 2: PESTAÑA PRINCIPAL FALTAS CON SUBPESTAÑAS -->
         <div id="sectionFaltas" class="hidden space-y-6">
             
-            <!-- Navigation Sub-Tabs -->
             <div class="flex space-x-2 border-b border-slate-200 dark:border-slate-700 pb-2">
                 <button id="subTabBtnAdd" onclick="switchFaltasSubTab('add')" class="px-3.5 py-2 rounded-xl font-semibold text-xs flex items-center space-x-2 transition bg-blue-600 text-white shadow-md shadow-blue-500/20">
                     <i class="fa-solid fa-plus-circle"></i>
@@ -509,11 +485,9 @@
                 </button>
             </div>
 
-            <!-- SUBPESTAÑA 1: AÑADIR FALTA -->
             <div id="subSectionAdd" class="space-y-6">
                 <div class="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                     
-                    <!-- Selector de Semana -->
                     <div class="mb-6 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div class="flex items-center space-x-3">
                             <div class="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-sm">
@@ -546,7 +520,6 @@
                         </p>
                     </div>
 
-                    <!-- Tabla interactiva del horario -->
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse min-w-[700px]">
                             <thead>
@@ -595,14 +568,12 @@
                                 </tr>
                             </thead>
                             <tbody id="scheduleTableBodyFaltas">
-                                <!-- Filas generadas dinámicamente -->
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
 
-            <!-- SUBPESTAÑA 2: VISTA POR ASIGNATURAS / TARJETAS -->
             <div id="subSectionCards" class="hidden space-y-6">
                 <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
@@ -612,10 +583,8 @@
                 </div>
 
                 <div id="subjectsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <!-- Cards dinámicas -->
                 </div>
 
-                <!-- Estado vacío -->
                 <div id="emptyState" class="hidden flex flex-col items-center justify-center py-16 px-4 bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 text-center mt-4">
                     <div class="w-20 h-20 bg-blue-50 dark:bg-blue-900/30 text-blue-500 rounded-3xl flex items-center justify-center text-3xl mb-4 shadow-inner">
                         <i class="fa-solid fa-folder-open"></i>
@@ -628,14 +597,11 @@
                 </div>
             </div>
 
-            <!-- SUBPESTAÑA 3: CALENDARIO SEMANAL Y LOG DE FALTAS -->
             <div id="subSectionCalendar" class="hidden space-y-6">
                 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     
-                    <!-- Vista del Horario Semanal de Faltas -->
                     <div class="lg:col-span-8 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                         
-                        <!-- Selector de Semana del Historial -->
                         <div class="mb-6 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
                             <div class="flex items-center space-x-3">
                                 <div class="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-sm">
@@ -668,7 +634,6 @@
                             </p>
                         </div>
 
-                        <!-- Horario Semanal con Horas Exactas -->
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse min-w-[650px]">
                                 <thead>
@@ -697,13 +662,11 @@
                                     </tr>
                                 </thead>
                                 <tbody id="historyWeeklyTableBody">
-                                    <!-- Filas generadas dinámicamente -->
                                 </tbody>
                             </table>
                         </div>
                     </div>
 
-                    <!-- Historial / Detalle Lista de Registros -->
                     <div class="lg:col-span-4 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full">
                         <div class="flex items-center justify-between mb-2">
                             <h3 class="text-lg font-bold flex items-center space-x-2">
@@ -715,7 +678,6 @@
                         <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">Registro cronológico con fecha y hora exacta:</p>
 
                         <div id="historyLogsList" class="space-y-3 overflow-y-auto max-h-[460px] pr-1 flex-grow">
-                            <!-- Dynamic list of logs -->
                         </div>
                     </div>
 
@@ -726,12 +688,10 @@
 
     </main>
 
-    <!-- Botón Flotante de Información -->
     <button class="floating-info-btn" onclick="openInfoModal()" title="Información">
         <i class="fa-solid fa-info text-lg"></i>
     </button>
 
-    <!-- Modal de Información -->
     <div id="infoModal" class="modal-overlay">
         <div class="modal-content dark:bg-slate-800 dark:text-slate-100">
             <button class="modal-close-btn dark:text-slate-400 dark:hover:text-white" onclick="closeInfoModal()">&times;</button>
@@ -767,7 +727,6 @@
         </div>
     </div>
 
-    <!-- Modal: Create / Edit Time Slot or Break -->
     <div id="timeSlotModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center justify-between mb-5">
@@ -800,7 +759,6 @@
         </div>
     </div>
 
-    <!-- Modal: Add/Edit Subject -->
     <div id="subjectModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 transform transition-all">
             <div class="flex items-center justify-between mb-5">
@@ -836,7 +794,6 @@
         </div>
     </div>
 
-    <!-- Modal: Assign Subject to Cell in Schedule -->
     <div id="assignSlotModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center justify-between mb-4">
@@ -849,7 +806,6 @@
             <p id="assignSlotSubhead" class="text-xs text-slate-500 dark:text-slate-400 mb-4">Selecciona qué clase se imparte a esta hora:</p>
             
             <div id="assignSlotList" class="space-y-2 max-h-60 overflow-y-auto pr-1">
-                <!-- Dynamically populated list of subjects -->
             </div>
 
             <div class="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end">
@@ -860,7 +816,6 @@
         </div>
     </div>
 
-    <!-- Global Settings Modal (Aquí es donde se ve y edita el límite al pulsar el botón) -->
     <div id="settingsModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center justify-between mb-5">
@@ -884,17 +839,14 @@
         </div>
     </div>
 
-    <!-- Notification Toast -->
     <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-24 opacity-0 transition-all duration-300 max-w-sm bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-3 rounded-2xl shadow-xl flex items-center space-x-3">
         <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
         <span id="toastMessage" class="text-sm font-medium">Operación realizada con éxito</span>
     </div>
 
     <script>
-        // Guardar estado de la pestaña activa
         let currentMainTab = 'schedule';
 
-        // Mostrar / ocultar la contraseña
         function togglePasswordVisibility() {
             const passwordInput = document.getElementById('auth-password');
             const passwordIcon = document.getElementById('toggle-password-icon');
@@ -917,13 +869,11 @@
             }
         }
 
-        // Toggle del menú desplegable de usuario
         function toggleUserDropdown() {
             const menu = document.getElementById('userDropdownMenu');
             if (menu) menu.classList.toggle('hidden');
         }
 
-        // Cerrar el desplegable de usuario si se hace clic fuera
         window.addEventListener('click', function(e) {
             const userBar = document.getElementById('user-info-bar');
             const menu = document.getElementById('userDropdownMenu');
@@ -932,7 +882,6 @@
             }
         });
 
-        // Registro del Service Worker para PWA
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./sw.js')
@@ -973,7 +922,6 @@
             renderApp(true);
         });
 
-        // Extraer hora de inicio de un string de hora (Ej: "08:00 - 09:00" -> 8.0)
         function parseSlotStartTime(slotLabel) {
             if (!slotLabel) return 0;
             const match = slotLabel.match(/(\d{1,2}):(\d{2})/);
@@ -991,7 +939,7 @@
             const currentDay = now.getDay();
             const currentHourDecimal = now.getHours() + (now.getMinutes() / 60);
 
-            const activeSlots = window.appData.timeSlots.filter(s => !s.isBreak);
+            const activeSlots = (window.appData.timeSlots || []).filter(s => !s.isBreak);
             let proximas = [];
 
             for (let offset = 0; offset < 7 && proximas.length < 3; offset++) {
@@ -1011,7 +959,7 @@
                     }
 
                     const key = `${dayIndex}_${slot.id}`;
-                    const subjectId = window.appData.schedule[key];
+                    const subjectId = window.appData.schedule ? window.appData.schedule[key] : null;
 
                     let subjectName = 'Hora libre';
                     if (subjectId) {
@@ -1053,7 +1001,19 @@
             document.getElementById('infoModal').classList.remove('active');
         }
 
-        function loadFromLocalStorage() {
+        window.getDefaultTimeSlots = function() {
+            return [
+                { id: 'slot_1', label: '08:00 - 09:00', isBreak: false },
+                { id: 'slot_2', label: '09:00 - 10:00', isBreak: false },
+                { id: 'slot_3', label: '10:00 - 11:00', isBreak: false },
+                { id: 'slot_break_1', label: '11:00 - 11:30 (Recreo)', isBreak: true },
+                { id: 'slot_5', label: '11:30 - 12:30', isBreak: false },
+                { id: 'slot_6', label: '12:30 - 13:30', isBreak: false },
+                { id: 'slot_7', label: '13:30 - 14:30', isBreak: false }
+            ];
+        };
+
+        window.loadFromLocalStorage = function() {
             const savedData = localStorage.getItem('attendance_app_hours_data');
             if (savedData) {
                 try {
@@ -1071,38 +1031,14 @@
             } else {
                 window.appData = {
                     globalLimit: 15,
-                    subjects: [
-                        { id: '1', name: 'Álgebra y Geometría', totalHours: 60, absences: 2, customLimit: null },
-                        { id: '2', name: 'Programación Web', totalHours: 80, absences: 5, customLimit: 20 },
-                        { id: '3', name: 'Bases de Datos', totalHours: 50, absences: 0, customLimit: null }
-                    ],
+                    subjects: [],
                     timeSlots: getDefaultTimeSlots(),
-                    schedule: {
-                        "0_slot_1": "1",
-                        "0_slot_2": "1",
-                        "1_slot_1": "2",
-                        "1_slot_2": "2",
-                        "2_slot_3": "3",
-                        "3_slot_5": "2",
-                        "4_slot_6": "1"
-                    },
+                    schedule: {},
                     absenceLogs: []
                 };
                 saveToLocalStorage();
             }
-        }
-
-        function getDefaultTimeSlots() {
-            return [
-                { id: 'slot_1', label: '08:00 - 09:00', isBreak: false },
-                { id: 'slot_2', label: '09:00 - 10:00', isBreak: false },
-                { id: 'slot_3', label: '10:00 - 11:00', isBreak: false },
-                { id: 'slot_break_1', label: '11:00 - 11:30 (Recreo)', isBreak: true },
-                { id: 'slot_5', label: '11:30 - 12:30', isBreak: false },
-                { id: 'slot_6', label: '12:30 - 13:30', isBreak: false },
-                { id: 'slot_7', label: '13:30 - 14:30', isBreak: false }
-            ];
-        }
+        };
 
         window.saveToLocalStorage = function() {
             localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
@@ -1224,7 +1160,7 @@
 
         window.renderApp = function(isInitialLoad = false) {
             const badge = document.getElementById('globalLimitBadge');
-            if (badge) badge.textContent = window.appData.globalLimit + '%';
+            if (badge) badge.textContent = (window.appData.globalLimit || 15) + '%';
             
             renderStats();
             renderWeekHeaderDates();
@@ -1240,25 +1176,29 @@
         };
 
         function renderStats() {
-            const totalSubjects = window.appData.subjects.length;
-            document.getElementById('statTotalSubjects').textContent = totalSubjects;
+            const totalSubjects = (window.appData.subjects || []).length;
+            const statTotalSubjects = document.getElementById('statTotalSubjects');
+            if (statTotalSubjects) statTotalSubjects.textContent = totalSubjects;
 
             let riskCount = 0;
             let totalAbsencesSum = 0;
 
-            window.appData.subjects.forEach(sub => {
-                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit);
+            (window.appData.subjects || []).forEach(sub => {
+                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
                 const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
-                const remainingHours = maxAbsencesAllowed - sub.absences;
+                const remainingHours = maxAbsencesAllowed - (sub.absences || 0);
                 
-                if (sub.absences >= maxAbsencesAllowed || remainingHours < 5.01) {
+                if ((sub.absences || 0) >= maxAbsencesAllowed || remainingHours < 5.01) {
                     riskCount++;
                 }
-                totalAbsencesSum += sub.absences;
+                totalAbsencesSum += (sub.absences || 0);
             });
 
-            document.getElementById('statRiskSubjects').textContent = riskCount;
-            document.getElementById('statTotalAbsences').textContent = totalAbsencesSum + ' h';
+            const statRiskSubjects = document.getElementById('statRiskSubjects');
+            const statTotalAbsences = document.getElementById('statTotalAbsences');
+
+            if (statRiskSubjects) statRiskSubjects.textContent = riskCount;
+            if (statTotalAbsences) statTotalAbsences.textContent = totalAbsencesSum + ' h';
         }
 
         function getMondayOfWeek(d, offsetWeeks = 0) {
@@ -1341,7 +1281,9 @@
             if (tbodyMain) tbodyMain.innerHTML = '';
             if (tbodyFaltas) tbodyFaltas.innerHTML = '';
 
-            if (window.appData.timeSlots.length === 0) {
+            const timeSlots = window.appData.timeSlots || [];
+
+            if (timeSlots.length === 0) {
                 const emptyMsg = `
                     <tr>
                         <td colspan="6" class="p-8 text-center text-slate-400 text-sm">
@@ -1353,7 +1295,7 @@
                 return;
             }
 
-            window.appData.timeSlots.forEach((slot) => {
+            timeSlots.forEach((slot) => {
                 const trMain = document.createElement('tr');
                 trMain.className = "border-b border-slate-100 dark:border-slate-700/60";
 
@@ -1401,8 +1343,8 @@
 
                     for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
                         const cellKey = `${dayIdx}_${slot.id}`;
-                        const subjectId = window.appData.schedule[cellKey];
-                        const subject = window.appData.subjects.find(s => s.id === subjectId);
+                        const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
+                        const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
 
                         const targetDate = getDateOfWeekDay(dayIdx, currentWeekOffset);
                         const dateKey = formatDateKey(targetDate);
@@ -1489,133 +1431,188 @@
         }
 
         function isAbsenceRecorded(dateKey, slotId) {
-            return window.appData.absenceLogs.some(log => log.date === dateKey && log.slotId === slotId);
+            return (window.appData.absenceLogs || []).some(log => log.date === dateKey && log.slotId === slotId);
         }
 
         function toggleAbsenceSlot(dayIdx, slotId) {
             const targetDate = getDateOfWeekDay(dayIdx, currentWeekOffset);
             const dateKey = formatDateKey(targetDate);
             const cellKey = `${dayIdx}_${slotId}`;
-            const subjectId = window.appData.schedule[cellKey];
+            const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
 
             if (!subjectId) return;
 
-            const subject = window.appData.subjects.find(s => s.id === subjectId);
+            const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
             if (!subject) return;
 
+            if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
             const existingIndex = window.appData.absenceLogs.findIndex(log => log.date === dateKey && log.slotId === slotId);
 
             if (existingIndex >= 0) {
                 window.appData.absenceLogs.splice(existingIndex, 1);
-                subject.absences = Math.max(0, subject.absences - 1);
-                showToast(`Falta retirada de ${subject.name}`, 'info');
+                subject.absences = Math.max(0, (subject.absences || 0) - 1);
+                showToast(`Falta eliminada de ${subject.name}`, 'info');
             } else {
-                const slot = window.appData.timeSlots.find(s => s.id === slotId);
-                const slotLabel = slot ? slot.label : 'Tramo Horario';
+                const slot = (window.appData.timeSlots || []).find(s => s.id === slotId);
                 window.appData.absenceLogs.push({
                     id: Date.now().toString(),
                     date: dateKey,
-                    slotId: slotId,
-                    slotLabel: slotLabel,
+                    slotId,
+                    slotLabel: slot ? slot.label : '',
                     subjectId: subject.id,
-                    subjectName: subject.name,
-                    timestamp: new Date().toISOString()
+                    subjectName: subject.name
                 });
-                subject.absences += 1;
+                subject.absences = (subject.absences || 0) + 1;
                 showToast(`Falta registrada en ${subject.name}`, 'warning');
             }
 
             saveToLocalStorage();
-            renderApp();
+            renderApp(false);
         }
 
         function markFullDayAbsence(dayIdx) {
             const targetDate = getDateOfWeekDay(dayIdx, currentWeekOffset);
             const dateKey = formatDateKey(targetDate);
-
             let addedCount = 0;
 
-            window.appData.timeSlots.forEach(slot => {
+            (window.appData.timeSlots || []).forEach(slot => {
                 if (slot.isBreak) return;
 
                 const cellKey = `${dayIdx}_${slot.id}`;
-                const subjectId = window.appData.schedule[cellKey];
+                const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
                 if (!subjectId) return;
 
-                const subject = window.appData.subjects.find(s => s.id === subjectId);
+                const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
                 if (!subject) return;
 
-                const isAlready = isAbsenceRecorded(dateKey, slot.id);
-                if (!isAlready) {
+                if (!isAbsenceRecorded(dateKey, slot.id)) {
+                    if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
                     window.appData.absenceLogs.push({
-                        id: Date.now().toString() + '_' + slot.id,
+                        id: Date.now().toString() + Math.random().toString().slice(2, 6),
                         date: dateKey,
                         slotId: slot.id,
                         slotLabel: slot.label,
                         subjectId: subject.id,
-                        subjectName: subject.name,
-                        timestamp: new Date().toISOString()
+                        subjectName: subject.name
                     });
-                    subject.absences += 1;
+                    subject.absences = (subject.absences || 0) + 1;
                     addedCount++;
                 }
             });
 
             if (addedCount > 0) {
-                showToast(`Se han registrado ${addedCount} faltas para el ${DAYS_NAMES[dayIdx]}`, 'warning');
+                showToast(`Se han añadido ${addedCount} faltas para este día`, 'warning');
+                saveToLocalStorage();
+                renderApp(false);
             } else {
-                showToast(`Ya tenías registradas todas las faltas de este día`, 'info');
+                showToast('No había horas asignadas sin falta para registrar este día', 'info');
             }
-
-            saveToLocalStorage();
-            renderApp();
         }
 
         function toggleEditScheduleMode() {
             isEditScheduleMode = !isEditScheduleMode;
-            
-            const btn = document.getElementById('editScheduleBtn');
-            const icon = document.getElementById('editScheduleIcon');
-            const text = document.getElementById('editScheduleText');
             const notice = document.getElementById('editScheduleNotice');
+            const btnText = document.getElementById('editScheduleText');
 
-            if (isEditScheduleMode) {
-                btn.className = "px-3.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-blue-500/20";
-                icon.className = "fa-solid fa-check";
-                text.textContent = "Finalizar Edición";
-                if (notice) notice.classList.remove('hidden');
-            } else {
-                btn.className = "px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1.5";
-                icon.className = "fa-solid fa-pen text-blue-500";
-                text.textContent = "Editar Horario y Asignaciones";
-                if (notice) notice.classList.add('hidden');
-            }
+            if (notice) notice.classList.toggle('hidden', !isEditScheduleMode);
+            if (btnText) btnText.textContent = isEditScheduleMode ? 'Finalizar Edición' : 'Editar Horario y Asignaciones';
 
             renderScheduleTable();
         }
 
-        function openSlotModal(slotId = null) {
-            const modal = document.getElementById('timeSlotModal');
-            const title = document.getElementById('slotModalTitle');
-            const editId = document.getElementById('editSlotId');
-            const labelInput = document.getElementById('slotLabel');
-            const typeSelect = document.getElementById('slotType');
+        function openAddSubjectModal() {
+            document.getElementById('editSubjectId').value = '';
+            document.getElementById('subjectName').value = '';
+            document.getElementById('subjectTotalHours').value = 60;
+            document.getElementById('subjectLimit').value = '';
+            document.getElementById('modalTitle').textContent = 'Añadir Nueva Asignatura';
+            document.getElementById('subjectModal').classList.remove('hidden');
+        }
 
-            if (slotId) {
-                const slot = window.appData.timeSlots.find(s => s.id === slotId);
-                if (!slot) return;
-                title.textContent = "Editar Tramo Horario";
-                editId.value = slot.id;
-                labelInput.value = slot.label;
-                typeSelect.value = slot.isBreak ? "break" : "class";
+        function openEditSubjectModal(id) {
+            const subject = (window.appData.subjects || []).find(s => s.id === id);
+            if (!subject) return;
+
+            document.getElementById('editSubjectId').value = subject.id;
+            document.getElementById('subjectName').value = subject.name;
+            document.getElementById('subjectTotalHours').value = subject.totalHours;
+            document.getElementById('subjectLimit').value = subject.customLimit !== null && subject.customLimit !== undefined ? subject.customLimit : '';
+            document.getElementById('modalTitle').textContent = 'Editar Asignatura';
+            document.getElementById('subjectModal').classList.remove('hidden');
+        }
+
+        function closeSubjectModal() {
+            document.getElementById('subjectModal').classList.add('hidden');
+        }
+
+        function handleSubjectSubmit(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editSubjectId').value;
+            const name = document.getElementById('subjectName').value.trim();
+            const totalHours = parseInt(document.getElementById('subjectTotalHours').value, 10);
+            const customLimitVal = document.getElementById('subjectLimit').value;
+            const customLimit = customLimitVal !== '' ? parseFloat(customLimitVal) : null;
+
+            if (!window.appData.subjects) window.appData.subjects = [];
+
+            if (editId) {
+                const sub = window.appData.subjects.find(s => s.id === editId);
+                if (sub) {
+                    sub.name = name;
+                    sub.totalHours = totalHours;
+                    sub.customLimit = customLimit;
+                }
+                showToast('Asignatura actualizada');
             } else {
-                title.textContent = "Añadir Tramo Horario";
-                editId.value = "";
-                labelInput.value = "";
-                typeSelect.value = "class";
+                const newSub = {
+                    id: Date.now().toString(),
+                    name,
+                    totalHours,
+                    absences: 0,
+                    customLimit
+                };
+                window.appData.subjects.push(newSub);
+                showToast('Asignatura guardada');
             }
 
-            modal.classList.remove('hidden');
+            saveToLocalStorage();
+            closeSubjectModal();
+            renderApp(false);
+        }
+
+        function deleteSubject(id) {
+            if (!confirm('¿Seguro que deseas eliminar esta asignatura?')) return;
+            
+            window.appData.subjects = (window.appData.subjects || []).filter(s => s.id !== id);
+            
+            if (window.appData.schedule) {
+                Object.keys(window.appData.schedule).forEach(key => {
+                    if (window.appData.schedule[key] === id) {
+                        delete window.appData.schedule[key];
+                    }
+                });
+            }
+
+            saveToLocalStorage();
+            renderApp(false);
+            showToast('Asignatura eliminada', 'info');
+        }
+
+        function openSlotModal(slotId = null) {
+            document.getElementById('editSlotId').value = slotId || '';
+            if (slotId) {
+                const slot = (window.appData.timeSlots || []).find(s => s.id === slotId);
+                if (slot) {
+                    document.getElementById('slotLabel').value = slot.label;
+                    document.getElementById('slotType').value = slot.isBreak ? 'break' : 'class';
+                    document.getElementById('slotModalTitle').textContent = 'Editar Tramo Horario';
+                }
+            } else {
+                document.getElementById('slotLabel').value = '';
+                document.getElementById('slotType').value = 'class';
+                document.getElementById('slotModalTitle').textContent = 'Añadir Tramo Horario';
+            }
+            document.getElementById('timeSlotModal').classList.remove('hidden');
         }
 
         function closeSlotModal() {
@@ -1628,7 +1625,7 @@
             const label = document.getElementById('slotLabel').value.trim();
             const isBreak = document.getElementById('slotType').value === 'break';
 
-            if (!label) return;
+            if (!window.appData.timeSlots) window.appData.timeSlots = [];
 
             if (editId) {
                 const slot = window.appData.timeSlots.find(s => s.id === editId);
@@ -1638,66 +1635,65 @@
                 }
             } else {
                 const newSlot = {
-                    id: 'slot_' + Date.now(),
-                    label: label,
-                    isBreak: isBreak
+                    id: 'slot_' + Date.now().toString(),
+                    label,
+                    isBreak
                 };
                 window.appData.timeSlots.push(newSlot);
             }
 
             saveToLocalStorage();
             closeSlotModal();
-            renderApp();
-            showToast('Tramo guardado con éxito', 'success');
+            renderApp(false);
+            showToast('Tramo horario guardado');
         }
 
         function deleteTimeSlot(slotId) {
-            if (!confirm('¿Seguro que deseas eliminar este tramo del horario?')) return;
-
-            window.appData.timeSlots = window.appData.timeSlots.filter(s => s.id !== slotId);
+            if (!confirm('¿Seguro que deseas eliminar este tramo horario?')) return;
+            window.appData.timeSlots = (window.appData.timeSlots || []).filter(s => s.id !== slotId);
             
-            Object.keys(window.appData.schedule).forEach(key => {
-                if (key.endsWith(`_${slotId}`)) {
-                    delete window.appData.schedule[key];
-                }
-            });
+            if (window.appData.schedule) {
+                Object.keys(window.appData.schedule).forEach(key => {
+                    if (key.endsWith('_' + slotId)) {
+                        delete window.appData.schedule[key];
+                    }
+                });
+            }
 
             saveToLocalStorage();
-            renderApp();
+            renderApp(false);
             showToast('Tramo eliminado', 'info');
         }
 
         function openAssignSlotModal(dayIdx, slotId) {
             selectedCellForAssign = { dayIdx, slotId };
-            const modal = document.getElementById('assignSlotModal');
-            const list = document.getElementById('assignSlotList');
-            const subhead = document.getElementById('assignSlotSubhead');
+            const listContainer = document.getElementById('assignSlotList');
+            if (!listContainer) return;
 
-            const slot = window.appData.timeSlots.find(s => s.id === slotId);
-            const slotName = slot ? slot.label : '';
-            subhead.textContent = `Asignar clase para ${DAYS_NAMES[dayIdx]} (${slotName}):`;
+            listContainer.innerHTML = '';
 
-            const currentSubjectId = window.appData.schedule[`${dayIdx}_${slotId}`];
+            const cellKey = `${dayIdx}_${slotId}`;
+            const currentSubjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
 
             let html = `
-                <button onclick="assignSubjectToSelectedCell(null)" class="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-900/20 hover:border-rose-300 text-rose-600 dark:text-rose-400 font-semibold text-xs transition flex items-center justify-between">
-                    <span>Sin clase / Hora libre</span>
-                    ${!currentSubjectId ? '<i class="fa-solid fa-check text-rose-600"></i>' : ''}
+                <button onclick="assignSubjectToCell(null)" class="w-full text-left p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-medium text-slate-500 transition flex items-center justify-between">
+                    <span>Sin Asignatura / Hora Libre</span>
+                    ${!currentSubjectId ? '<i class="fa-solid fa-check text-blue-500"></i>' : ''}
                 </button>
             `;
 
-            window.appData.subjects.forEach(sub => {
+            (window.appData.subjects || []).forEach(sub => {
                 const isSelected = sub.id === currentSubjectId;
                 html += `
-                    <button onclick="assignSubjectToSelectedCell('${sub.id}')" class="w-full text-left p-3 rounded-xl border ${isSelected ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'} text-xs font-semibold transition flex items-center justify-between">
-                        <span class="text-slate-800 dark:text-slate-200">${escapeHtml(sub.name)}</span>
-                        ${isSelected ? '<i class="fa-solid fa-check text-blue-600 dark:text-blue-400"></i>' : ''}
+                    <button onclick="assignSubjectToCell('${sub.id}')" class="w-full text-left p-3 rounded-xl border ${isSelected ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'} text-xs font-semibold text-slate-800 dark:text-slate-100 transition flex items-center justify-between">
+                        <span>${escapeHtml(sub.name)}</span>
+                        ${isSelected ? '<i class="fa-solid fa-check text-blue-500"></i>' : ''}
                     </button>
                 `;
             });
 
-            list.innerHTML = html;
-            modal.classList.remove('hidden');
+            listContainer.innerHTML = html;
+            document.getElementById('assignSlotModal').classList.remove('hidden');
         }
 
         function closeAssignSlotModal() {
@@ -1705,11 +1701,12 @@
             selectedCellForAssign = null;
         }
 
-        function assignSubjectToSelectedCell(subjectId) {
+        function assignSubjectToCell(subjectId) {
             if (!selectedCellForAssign) return;
-
             const { dayIdx, slotId } = selectedCellForAssign;
             const cellKey = `${dayIdx}_${slotId}`;
+
+            if (!window.appData.schedule) window.appData.schedule = {};
 
             if (subjectId) {
                 window.appData.schedule[cellKey] = subjectId;
@@ -1719,184 +1716,8 @@
 
             saveToLocalStorage();
             closeAssignSlotModal();
-            renderApp();
-            showToast('Horario actualizado', 'success');
-        }
-
-        function renderSubjectsList() {
-            const container = document.getElementById('subjectsContainer');
-            const emptyState = document.getElementById('emptyState');
-
-            if (!container) return;
-            container.innerHTML = '';
-
-            if (window.appData.subjects.length === 0) {
-                if (emptyState) emptyState.classList.remove('hidden');
-                return;
-            }
-
-            if (emptyState) emptyState.classList.add('hidden');
-
-            window.appData.subjects.forEach((subject) => {
-                const limitPct = subject.customLimit !== null && subject.customLimit !== undefined && subject.customLimit !== '' ? parseFloat(subject.customLimit) : parseFloat(window.appData.globalLimit);
-                const maxAbsencesAllowed = (subject.totalHours * limitPct) / 100;
-                const percentageUsed = maxAbsencesAllowed > 0 ? ((subject.absences / maxAbsencesAllowed) * 100).toFixed(0) : 0;
-                const remainingHours = (maxAbsencesAllowed - subject.absences).toFixed(1);
-
-                let statusBadgeClass = "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
-                let statusText = "En Límites OK";
-                let progressBarColor = "bg-emerald-500";
-
-                if (subject.absences >= maxAbsencesAllowed) {
-                    statusBadgeClass = "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300";
-                    statusText = "¡Límite Superado!";
-                    progressBarColor = "bg-rose-600";
-                } else if (remainingHours < 5) {
-                    statusBadgeClass = "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
-                    statusText = "¡En Riesgo!";
-                    progressBarColor = "bg-amber-500";
-                }
-
-                const card = document.createElement('div');
-                card.className = "bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-5";
-
-                card.innerHTML = `
-                    <div>
-                        <div class="flex items-start justify-between mb-3">
-                            <span class="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-full ${statusBadgeClass}">
-                                ${statusText}
-                            </span>
-                            <div class="flex items-center space-x-1">
-                                <button onclick="openEditSubjectModal('${subject.id}')" title="Editar Asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-center transition">
-                                    <i class="fa-solid fa-pen text-xs"></i>
-                                </button>
-                                <button onclick="deleteSubject('${subject.id}')" title="Eliminar Asignatura" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 flex items-center justify-center transition">
-                                    <i class="fa-solid fa-trash text-xs"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        <h3 class="text-lg font-bold text-slate-900 dark:text-white truncate" title="${escapeHtml(subject.name)}">${escapeHtml(subject.name)}</h3>
-                        
-                        <div class="mt-4 space-y-2">
-                            <div class="flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                                <span>Faltas: <strong class="text-slate-800 dark:text-slate-200">${subject.absences} h</strong></span>
-                                <span>Máx. permitido (${limitPct}%): <strong class="text-slate-800 dark:text-slate-200">${maxAbsencesAllowed.toFixed(1)} h</strong></span>
-                            </div>
-
-                            <div class="w-full h-2.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                <div class="h-full ${progressBarColor} transition-all duration-300" style="width: ${Math.min(100, percentageUsed)}%"></div>
-                            </div>
-
-                            <div class="flex justify-between text-[11px] text-slate-400">
-                                <span>Progreso límite: ${percentageUsed}%</span>
-                                <span>Margen disponible: <strong class="${parseFloat(remainingHours) <= 0 ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}">${remainingHours} h</strong></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pt-4 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Ajuste manual</span>
-                        <div class="flex items-center space-x-2">
-                            <button onclick="updateAbsences('${subject.id}', -1)" title="Restar 1 hora" class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold text-slate-700 dark:text-slate-200 transition flex items-center justify-center">
-                                -
-                            </button>
-                            <span class="w-8 text-center font-bold text-sm text-slate-800 dark:text-slate-100">${subject.absences}</span>
-                            <button onclick="updateAbsences('${subject.id}', 1)" title="Sumar 1 hora" class="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-900/40 hover:bg-blue-100 dark:hover:bg-blue-900/70 text-blue-600 dark:text-blue-300 font-bold transition flex items-center justify-center">
-                                +
-                            </button>
-                        </div>
-                    </div>
-                `;
-
-                container.appendChild(card);
-            });
-        }
-
-        function updateAbsences(subjectId, delta) {
-            const subject = window.appData.subjects.find(s => s.id === subjectId);
-            if (!subject) return;
-
-            subject.absences = Math.max(0, subject.absences + delta);
-            saveToLocalStorage();
-            renderApp();
-        }
-
-        function openAddSubjectModal() {
-            document.getElementById('modalTitle').textContent = "Añadir Nueva Asignatura";
-            document.getElementById('editSubjectId').value = "";
-            document.getElementById('subjectName').value = "";
-            document.getElementById('subjectTotalHours').value = "60";
-            document.getElementById('subjectLimit').value = "";
-            document.getElementById('subjectModal').classList.remove('hidden');
-        }
-
-        function openEditSubjectModal(subjectId) {
-            const subject = window.appData.subjects.find(s => s.id === subjectId);
-            if (!subject) return;
-
-            document.getElementById('modalTitle').textContent = "Editar Asignatura";
-            document.getElementById('editSubjectId').value = subject.id;
-            document.getElementById('subjectName').value = subject.name;
-            document.getElementById('subjectTotalHours').value = subject.totalHours;
-            document.getElementById('subjectLimit').value = subject.customLimit !== null && subject.customLimit !== undefined ? subject.customLimit : "";
-            document.getElementById('subjectModal').classList.remove('hidden');
-        }
-
-        function closeSubjectModal() {
-            document.getElementById('subjectModal').classList.add('hidden');
-        }
-
-        function handleSubjectSubmit(e) {
-            e.preventDefault();
-            const id = document.getElementById('editSubjectId').value;
-            const name = document.getElementById('subjectName').value.trim();
-            const totalHours = parseFloat(document.getElementById('subjectTotalHours').value);
-            const customLimitInput = document.getElementById('subjectLimit').value;
-            const customLimit = customLimitInput !== "" ? parseFloat(customLimitInput) : null;
-
-            if (!name || isNaN(totalHours)) return;
-
-            if (id) {
-                const subject = window.appData.subjects.find(s => s.id === id);
-                if (subject) {
-                    subject.name = name;
-                    subject.totalHours = totalHours;
-                    subject.customLimit = customLimit;
-                }
-            } else {
-                const newSubject = {
-                    id: Date.now().toString(),
-                    name: name,
-                    totalHours: totalHours,
-                    absences: 0,
-                    customLimit: customLimit
-                };
-                window.appData.subjects.push(newSubject);
-            }
-
-            saveToLocalStorage();
-            closeSubjectModal();
-            renderApp();
-            showToast('Asignatura guardada con éxito', 'success');
-        }
-
-        function deleteSubject(subjectId) {
-            if (!confirm('¿Seguro que deseas eliminar esta asignatura? Se borrará también de tu horario.')) return;
-
-            window.appData.subjects = window.appData.subjects.filter(s => s.id !== subjectId);
-            
-            Object.keys(window.appData.schedule).forEach(key => {
-                if (window.appData.schedule[key] === subjectId) {
-                    delete window.appData.schedule[key];
-                }
-            });
-
-            window.appData.absenceLogs = window.appData.absenceLogs.filter(log => log.subjectId !== subjectId);
-
-            saveToLocalStorage();
-            renderApp();
-            showToast('Asignatura eliminada', 'info');
+            renderScheduleTable();
+            showToast('Asignación actualizada');
         }
 
         function openSettingsModal() {
@@ -1911,15 +1732,109 @@
         function handleSettingsSubmit(e) {
             e.preventDefault();
             const val = parseFloat(document.getElementById('globalLimitInput').value);
-            if (!isNaN(val) && val > 0 && val <= 100) {
+            if (!isNaN(val) && val > 0) {
                 window.appData.globalLimit = val;
                 saveToLocalStorage();
                 closeSettingsModal();
-                renderApp();
-                showToast('Límite global actualizado', 'success');
+                renderApp(false);
+                showToast('Límite global actualizado');
             }
         }
 
+        function renderSubjectsList() {
+            const container = document.getElementById('subjectsContainer');
+            const emptyState = document.getElementById('emptyState');
+
+            if (!container) return;
+            container.innerHTML = '';
+
+            const subjects = window.appData.subjects || [];
+
+            if (subjects.length === 0) {
+                if (emptyState) emptyState.classList.remove('hidden');
+                return;
+            }
+
+            if (emptyState) emptyState.classList.add('hidden');
+
+            subjects.forEach(sub => {
+                const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
+                const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
+                const absences = sub.absences || 0;
+                const currentPct = sub.totalHours > 0 ? ((absences / sub.totalHours) * 100).toFixed(1) : 0;
+                const remainingHours = Math.max(0, maxAbsencesAllowed - absences).toFixed(1);
+
+                let statusBadge = '';
+                if (absences >= maxAbsencesAllowed) {
+                    statusBadge = `<span class="bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">Límite Superado</span>`;
+                } else if (remainingHours < 5) {
+                    statusBadge = `<span class="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">En Riesgo</span>`;
+                } else {
+                    statusBadge = `<span class="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">Sin Riesgo</span>`;
+                }
+
+                const card = document.createElement('div');
+                card.className = "bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between";
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <div>
+                                <h3 class="font-bold text-base text-slate-900 dark:text-white leading-snug">${escapeHtml(sub.name)}</h3>
+                                <p class="text-xs text-slate-400 mt-0.5">${sub.totalHours} horas totales en el curso</p>
+                            </div>
+                            ${statusBadge}
+                        </div>
+
+                        <div class="my-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700/60 grid grid-cols-2 gap-3 text-center">
+                            <div>
+                                <span class="text-[10px] font-bold uppercase text-slate-400 block">Faltas Actuales</span>
+                                <span class="text-lg font-extrabold text-blue-600 dark:text-blue-400">${absences} h</span>
+                            </div>
+                            <div>
+                                <span class="text-[10px] font-bold uppercase text-slate-400 block">Margen Restante</span>
+                                <span class="text-lg font-extrabold text-slate-700 dark:text-slate-200">${remainingHours} h</span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5 mb-5">
+                            <div class="flex justify-between text-xs font-semibold">
+                                <span class="text-slate-500">Porcentaje consumido</span>
+                                <span class="${absences >= maxAbsencesAllowed ? 'text-rose-600' : 'text-slate-700 dark:text-slate-300'}">${currentPct}% / ${limitPct}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                                <div class="h-full ${absences >= maxAbsencesAllowed ? 'bg-rose-500' : 'bg-blue-600'} transition-all duration-300" style="width: ${Math.min(100, (currentPct / limitPct) * 100)}%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
+                        <div class="flex items-center space-x-1">
+                            <button onclick="changeAbsenceDirectly('${sub.id}', -1)" title="Restar 1 falta" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 font-bold text-sm transition">-</button>
+                            <button onclick="changeAbsenceDirectly('${sub.id}', 1)" title="Sumar 1 falta" class="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 hover:bg-blue-100 font-bold text-sm transition">+</button>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="openEditSubjectModal('${sub.id}')" class="p-2 rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition" title="Editar">
+                                <i class="fa-solid fa-pen text-sm"></i>
+                            </button>
+                            <button onclick="deleteSubject('${sub.id}')" class="p-2 rounded-xl text-slate-400 hover:text-rose-600 transition" title="Eliminar">
+                                <i class="fa-solid fa-trash text-sm"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function changeAbsenceDirectly(subjectId, delta) {
+            const sub = (window.appData.subjects || []).find(s => s.id === subjectId);
+            if (!sub) return;
+            sub.absences = Math.max(0, (sub.absences || 0) + delta);
+            saveToLocalStorage();
+            renderApp(false);
+            showToast(`Faltas ajustadas en ${sub.name}`);
+        }
+
         function changeHistoryWeek(delta) {
             historyWeekOffset += delta;
             renderHistorySection();
@@ -1931,153 +1846,84 @@
         }
 
         function renderHistorySection() {
-            renderHistoryWeekDates();
-            renderHistoryWeeklyTable();
-            renderHistoryLogsList();
-        }
-
-        function changeHistoryWeek(delta) {
-            historyWeekOffset += delta;
-            renderHistorySection();
-        }
-
-        function resetHistoryToCurrentWeek() {
-            historyWeekOffset = 0;
-            renderHistorySection();
-        }
-
-        function renderHistorySection() {
-            // 1. Fechas y etiquetas de la semana del historial
             const monday = getMondayOfWeek(new Date(), historyWeekOffset);
             const friday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 4);
+
             const formatShort = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
-
-            let label = "";
-            if (historyWeekOffset === 0) {
-                label = `Semana Actual (${formatShort(monday)} al ${formatShort(friday)})`;
-            } else if (historyWeekOffset === -1) {
-                label = `Semana Pasada (${formatShort(monday)} al ${formatShort(friday)})`;
-            } else if (historyWeekOffset === 1) {
-                label = `Semana Siguiente (${formatShort(monday)} al ${formatShort(friday)})`;
-            } else if (historyWeekOffset < -1) {
-                label = `Hace ${Math.abs(historyWeekOffset)} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
-            } else {
-                label = `En ${historyWeekOffset} semanas (${formatShort(monday)} al ${formatShort(friday)})`;
+            const labelHist = document.getElementById('historyWeekRangeLabel');
+            if (labelHist) {
+                labelHist.textContent = historyWeekOffset === 0 ? `Semana Actual (${formatShort(monday)} al ${formatShort(friday)})` : `Semana (${formatShort(monday)} al ${formatShort(friday)})`;
             }
-
-            const historyLabel = document.getElementById('historyWeekRangeLabel');
-            if (historyLabel) historyLabel.textContent = label;
 
             for (let i = 0; i < 5; i++) {
                 const d = getDateOfWeekDay(i, historyWeekOffset);
-                const dayElHistory = document.getElementById(`historyDayDate_${i}`);
-                if (dayElHistory) dayElHistory.textContent = `${d.getDate()} / ${d.getMonth() + 1}`;
+                const el = document.getElementById(`historyDayDate_${i}`);
+                if (el) el.textContent = `${d.getDate()} / ${d.getMonth() + 1}`;
             }
 
-            // 2. Renderizar Tabla Semanal de Faltas
-            const tbodyHistory = document.getElementById('historyWeeklyTableBody');
-            if (tbodyHistory) {
-                tbodyHistory.innerHTML = '';
+            const tbody = document.getElementById('historyWeeklyTableBody');
+            if (tbody) {
+                tbody.innerHTML = '';
+                const timeSlots = window.appData.timeSlots || [];
 
-                if (window.appData.timeSlots.length === 0) {
-                    tbodyHistory.innerHTML = `
-                        <tr>
-                            <td colspan="6" class="p-8 text-center text-slate-400 text-sm">
-                                No hay tramos horarios configurados.
-                            </td>
-                        </tr>`;
-                } else {
-                    window.appData.timeSlots.forEach((slot) => {
-                        const tr = document.createElement('tr');
-                        tr.className = "border-b border-slate-100 dark:border-slate-700/60";
+                timeSlots.forEach(slot => {
+                    const tr = document.createElement('tr');
+                    tr.className = "border-b border-slate-100 dark:border-slate-700/60";
 
-                        let timeCol = `
-                            <td class="p-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap align-middle">
-                                <span class="truncate max-w-[100px]" title="${escapeHtml(slot.label)}">${escapeHtml(slot.label)}</span>
-                            </td>
-                        `;
+                    let html = `<td class="p-2.5 text-xs font-semibold text-slate-500 whitespace-nowrap">${escapeHtml(slot.label)}</td>`;
 
-                        if (slot.isBreak) {
-                            tr.innerHTML = timeCol + `
-                                <td colspan="5" class="p-2 text-center">
-                                    <div class="w-full py-1.5 px-3 rounded-xl bg-amber-50/80 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-[11px] font-semibold flex items-center justify-center space-x-1.5">
-                                        <i class="fa-solid fa-mug-hot text-amber-500"></i>
-                                        <span>${escapeHtml(slot.label)}</span>
-                                    </div>
-                                </td>`;
-                        } else {
-                            let daysCells = '';
-                            for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
-                                const targetDate = getDateOfWeekDay(dayIdx, historyWeekOffset);
-                                const dateKey = formatDateKey(targetDate);
+                    if (slot.isBreak) {
+                        html += `
+                            <td colspan="5" class="p-2 text-center text-xs text-amber-600 dark:text-amber-400 font-medium bg-amber-50/50 dark:bg-amber-900/10">
+                                Recreo
+                            </td>`;
+                    } else {
+                        for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+                            const dateObj = getDateOfWeekDay(dayIdx, historyWeekOffset);
+                            const dateKey = formatDateKey(dateObj);
+                            const isAbsent = isAbsenceRecorded(dateKey, slot.id);
+
+                            if (isAbsent) {
                                 const cellKey = `${dayIdx}_${slot.id}`;
-                                const subjectId = window.appData.schedule[cellKey];
-                                const subject = window.appData.subjects.find(s => s.id === subjectId);
-
-                                const isAbsent = isAbsenceRecorded(dateKey, slot.id);
-
-                                if (isAbsent) {
-                                    const nameToShow = subject ? subject.name : 'Falta registrada';
-                                    daysCells += `
-                                        <td class="p-1.5 text-center align-middle">
-                                            <div class="w-full p-2 rounded-xl bg-rose-500 text-white text-[11px] font-bold shadow-sm flex flex-col items-center justify-center gap-0.5">
-                                                <span class="truncate max-w-full">${escapeHtml(nameToShow)}</span>
-                                                <span class="text-[9px] bg-rose-700/80 px-1.5 py-0.2 rounded-full uppercase tracking-wider">Falta</span>
-                                            </div>
-                                        </td>`;
-                                } else if (subject) {
-                                    daysCells += `
-                                        <td class="p-1.5 text-center align-middle">
-                                            <div class="w-full p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 text-[11px] font-medium truncate">
-                                                ${escapeHtml(subject.name)}
-                                            </div>
-                                        </td>`;
-                                } else {
-                                    daysCells += `
-                                        <td class="p-1.5 text-center align-middle">
-                                            <div class="w-full p-2 text-slate-300 dark:text-slate-700 text-[11px] text-center">-</div>
-                                        </td>`;
-                                }
+                                const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
+                                const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
+                                html += `
+                                    <td class="p-2 text-center">
+                                        <div class="p-2 rounded-xl bg-rose-500 text-white text-[11px] font-bold shadow-sm truncate">
+                                            ${subject ? escapeHtml(subject.name) : 'Falta'}
+                                        </div>
+                                    </td>`;
+                            } else {
+                                html += `<td class="p-2 text-center text-slate-300 dark:text-slate-700 text-xs">-</td>`;
                             }
-                            tr.innerHTML = timeCol + daysCells;
                         }
-                        tbodyHistory.appendChild(tr);
-                    });
-                }
+                    }
+
+                    tr.innerHTML = html;
+                    tbody.appendChild(tr);
+                });
             }
 
-            // 3. Renderizar Lista de Registros Cronológicos (Detalle)
             const logsList = document.getElementById('historyLogsList');
             if (logsList) {
                 logsList.innerHTML = '';
+                const logs = (window.appData.absenceLogs || []).slice().reverse();
 
-                if (!window.appData.absenceLogs || window.appData.absenceLogs.length === 0) {
-                    logsList.innerHTML = `
-                        <div class="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
-                            <i class="fa-solid fa-clipboard-check text-2xl mb-2 block opacity-50"></i>
-                            No hay faltas registradas hasta el momento.
-                        </div>`;
+                if (logs.length === 0) {
+                    logsList.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">No hay ninguna falta registrada en el historial.</p>`;
                     return;
                 }
 
-                // Ordenar por fecha descendente
-                const sortedLogs = [...window.appData.absenceLogs].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-                sortedLogs.forEach(log => {
+                logs.forEach(log => {
                     const item = document.createElement('div');
-                    item.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs";
+                    item.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs";
                     item.innerHTML = `
-                        <div class="flex items-center space-x-3 truncate">
-                            <div class="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 font-bold">
-                                <i class="fa-solid fa-user-xmark text-xs"></i>
-                            </div>
-                            <div class="truncate">
-                                <h4 class="font-bold text-slate-800 dark:text-slate-100 truncate">${escapeHtml(log.subjectName || 'Asignatura')}</h4>
-                                <p class="text-[11px] text-slate-400">${log.date} • ${escapeHtml(log.slotLabel || '')}</p>
-                            </div>
+                        <div>
+                            <span class="font-bold text-slate-800 dark:text-slate-100 block">${escapeHtml(log.subjectName)}</span>
+                            <span class="text-slate-400 text-[11px]">${log.date} • ${escapeHtml(log.slotLabel)}</span>
                         </div>
-                        <button onclick="removeAbsenceLog('${log.id}', '${log.subjectId}')" title="Eliminar este registro" class="w-7 h-7 rounded-lg bg-white dark:bg-slate-800 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 transition">
-                            <i class="fa-solid fa-trash text-[10px]"></i>
+                        <button onclick="removeAbsenceLogById('${log.id}')" class="text-rose-500 hover:text-rose-700 p-1" title="Eliminar este registro">
+                            <i class="fa-solid fa-trash-can"></i>
                         </button>
                     `;
                     logsList.appendChild(item);
@@ -2085,15 +1931,20 @@
             }
         }
 
-        function removeAbsenceLog(logId, subjectId) {
-            window.appData.absenceLogs = window.appData.absenceLogs.filter(log => log.id !== logId);
-            const subject = window.appData.subjects.find(s => s.id === subjectId);
+        function removeAbsenceLogById(logId) {
+            const log = (window.appData.absenceLogs || []).find(l => l.id === logId);
+            if (!log) return;
+
+            window.appData.absenceLogs = window.appData.absenceLogs.filter(l => l.id !== logId);
+
+            const subject = (window.appData.subjects || []).find(s => s.id === log.subjectId);
             if (subject) {
-                subject.absences = Math.max(0, subject.absences - 1);
+                subject.absences = Math.max(0, (subject.absences || 0) - 1);
             }
+
             saveToLocalStorage();
-            renderApp();
-            showToast('Falta eliminada del historial', 'info');
+            renderApp(false);
+            showToast('Registro de falta eliminado', 'info');
         }
     </script>
 </body>
