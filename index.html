@@ -38,6 +38,17 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
 
+        /* Estado visual inequívoco de una hora con falta registrada. */
+        .absence-marked {
+          background-color: #dc2626 !important;
+          color: #ffffff !important;
+          border-color: #b91c1c !important;
+        }
+        .absence-marked .absence-badge {
+          background-color: #991b1b !important;
+          color: #ffffff !important;
+        }
+
         /* Botón flotante abajo a la derecha */
         .floating-info-btn {
           position: fixed;
@@ -158,6 +169,9 @@
   let applyingCloudData = false;
   let cloudSaveTimer = null;
   let cloudSavePromise = Promise.resolve();
+  // Evita que un snapshot remoto anterior a nuestro último cambio sobrescriba
+  // visualmente una falta que acabamos de registrar.
+  let hasPendingLocalChanges = false;
 
   function waitForDomReady() {
     if (document.readyState !== 'loading') return Promise.resolve();
@@ -215,7 +229,10 @@
     // Encadenamos las escrituras para evitar que dos cambios rápidos se pisen.
     cloudSavePromise = cloudSavePromise
       .catch(() => {})
-      .then(() => setDoc(getUserDataRef(currentFirebaseUser), payload, { merge: true }));
+      .then(() => setDoc(getUserDataRef(currentFirebaseUser), payload, { merge: true }))
+      .then(() => {
+        hasPendingLocalChanges = false;
+      });
 
     cloudSavePromise.catch(error => {
       console.error('Error guardando datos en Firestore:', error);
@@ -269,7 +286,14 @@
         const remoteJson = JSON.stringify(remoteData);
         const localJson = JSON.stringify(normaliseAppData(window.appData));
 
-        if (remoteJson === localJson) return;
+        if (remoteJson === localJson) {
+          hasPendingLocalChanges = false;
+          return;
+        }
+
+        // Si acabamos de cambiar una falta, no sustituyas el estado local con
+        // un snapshot remoto que todavía no contiene ese cambio.
+        if (hasPendingLocalChanges) return;
 
         applyingCloudData = true;
         window.appData = remoteData;
@@ -1204,6 +1228,7 @@
 
         window.saveToLocalStorage = function() {
             localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+            hasPendingLocalChanges = true;
 
             if (window.saveDataToCloud && !applyingCloudData) {
                 clearTimeout(cloudSaveTimer);
@@ -1547,10 +1572,10 @@
                             if (isAbsent) {
                                 daysCellsHtmlFaltas += `
                                     <td class="p-2 text-center align-middle">
-                                        <button onclick="toggleAbsenceSlot(${dayIdx}, '${slot.id}')" class="w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 bg-rose-600 text-white border-rose-700">
+                                        <button type="button" aria-label="Falta registrada en ${escapeHtml(subject.name)}" title="Falta registrada — pulsa para quitarla" onclick="toggleAbsenceSlot(${dayIdx}, '${slot.id}')" class="absence-marked w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 bg-red-600 text-white border-red-700 dark:bg-red-600 dark:text-white dark:border-red-700" style="background-color:#dc2626 !important;color:#ffffff !important;border-color:#b91c1c !important;">
                                             <span class="font-bold truncate max-w-full">${escapeHtml(subject.name)}</span>
-                                            <span class="text-[10px] font-semibold flex items-center gap-1 bg-rose-700 px-2 py-0.5 rounded-full">
-                                                <i class="fa-solid fa-xmark"></i> Falta
+                                            <span class="absence-badge text-[10px] font-semibold flex items-center gap-1 bg-red-800 px-2 py-0.5 rounded-full text-white" style="background-color:#991b1b !important;color:#ffffff !important;">
+                                                <i class="fa-solid fa-xmark"></i> FALTA
                                             </span>
                                         </button>
                                     </td>`;
@@ -1622,7 +1647,11 @@
             }
 
             saveToLocalStorage();
-            renderApp();
+            // Renderizar inmediatamente el horario de faltas. El cambio es optimista:
+            // la celda pasa a rojo y muestra FALTA sin esperar a Firestore.
+            renderScheduleTable();
+            renderStats();
+            renderHistorySection();
         }
 
         function markFullDayAbsence(dayIdx) {
