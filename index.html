@@ -301,7 +301,16 @@
                     <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Contraseña</label>
                     <div class="relative">
                         <i class="fa-solid fa-lock absolute left-4 top-3.5 text-slate-400 text-sm"></i>
-                        <input type="password" id="auth-password" placeholder="••••••••" class="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        <input type="password" id="auth-password" placeholder="••••••••" class="w-full pl-10 pr-12 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        <button
+                            type="button"
+                            id="toggle-password"
+                            onclick="togglePasswordVisibility()"
+                            class="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                            title="Mostrar contraseña"
+                            aria-label="Mostrar contraseña">
+                            <i id="toggle-password-icon" class="fa-solid fa-eye"></i>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -828,6 +837,29 @@
     </div>
 
     <script>
+        // Mostrar / ocultar la contraseña
+        function togglePasswordVisibility() {
+            const passwordInput = document.getElementById('auth-password');
+            const passwordIcon = document.getElementById('toggle-password-icon');
+            const toggleButton = document.getElementById('toggle-password');
+
+            if (!passwordInput || !passwordIcon || !toggleButton) return;
+
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                passwordIcon.classList.remove('fa-eye');
+                passwordIcon.classList.add('fa-eye-slash');
+                toggleButton.title = 'Ocultar contraseña';
+                toggleButton.setAttribute('aria-label', 'Ocultar contraseña');
+            } else {
+                passwordInput.type = 'password';
+                passwordIcon.classList.remove('fa-eye-slash');
+                passwordIcon.classList.add('fa-eye');
+                toggleButton.title = 'Mostrar contraseña';
+                toggleButton.setAttribute('aria-label', 'Mostrar contraseña');
+            }
+        }
+
         // Toggle del menú desplegable de usuario
         function toggleUserDropdown() {
             const menu = document.getElementById('userDropdownMenu');
