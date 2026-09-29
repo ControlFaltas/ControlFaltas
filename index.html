@@ -38,17 +38,6 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
 
-        /* Estado visual inequívoco de una hora con falta registrada. */
-        .absence-marked {
-          background-color: #dc2626 !important;
-          color: #ffffff !important;
-          border-color: #b91c1c !important;
-        }
-        .absence-marked .absence-badge {
-          background-color: #991b1b !important;
-          color: #ffffff !important;
-        }
-
         /* Botón flotante abajo a la derecha */
         .floating-info-btn {
           position: fixed;
@@ -136,13 +125,11 @@
     signOut,
     onAuthStateChanged 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-  import {
-    getFirestore,
-    doc,
-    getDoc,
-    setDoc,
-    onSnapshot,
-    serverTimestamp
+  import { 
+    getFirestore, 
+    doc, 
+    setDoc, 
+    getDoc 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
   // Configuración de Firebase
@@ -162,173 +149,16 @@
   const auth = getAuth(app);
   const db = getFirestore(app);
 
-  // Estado de sincronización con Firestore.
-  let unsubscribeUserData = null;
-  let currentFirebaseUser = null;
-  let cloudDataReady = false;
-  let applyingCloudData = false;
-  let cloudSaveTimer = null;
-  let cloudSavePromise = Promise.resolve();
-  // Evita que un snapshot remoto anterior a nuestro último cambio sobrescriba
-  // visualmente una falta que acabamos de registrar.
-  let hasPendingLocalChanges = false;
-
-  function waitForDomReady() {
-    if (document.readyState !== 'loading') return Promise.resolve();
-    return new Promise(resolve => {
-      document.addEventListener('DOMContentLoaded', resolve, { once: true });
-    });
-  }
-
-  function getUserDataRef(user) {
-    return doc(db, 'users', user.uid);
-  }
-
-  function normaliseAppData(data) {
-    const defaults = {
-      globalLimit: 15,
-      subjects: [],
-      timeSlots: getDefaultTimeSlotsSafe(),
-      schedule: {},
-      absenceLogs: []
-    };
-
-    const source = data && typeof data === 'object' ? data : {};
-    return {
-      globalLimit: source.globalLimit === undefined ? defaults.globalLimit : source.globalLimit,
-      subjects: Array.isArray(source.subjects) ? source.subjects : defaults.subjects,
-      timeSlots: Array.isArray(source.timeSlots) && source.timeSlots.length ? source.timeSlots : defaults.timeSlots,
-      schedule: source.schedule && typeof source.schedule === 'object' ? source.schedule : defaults.schedule,
-      absenceLogs: Array.isArray(source.absenceLogs) ? source.absenceLogs : defaults.absenceLogs
-    };
-  }
-
-  // getDefaultTimeSlots() está declarado más abajo en este mismo script.
-  // Esta versión evita depender de su declaración durante la inicialización de Firebase.
-  function getDefaultTimeSlotsSafe() {
-    return [
-      { id: 'slot_1', label: '08:00 - 09:00', isBreak: false },
-      { id: 'slot_2', label: '09:00 - 10:00', isBreak: false },
-      { id: 'slot_3', label: '10:00 - 11:00', isBreak: false },
-      { id: 'slot_break_1', label: '11:00 - 11:30 (Recreo)', isBreak: true },
-      { id: 'slot_5', label: '11:30 - 12:30', isBreak: false },
-      { id: 'slot_6', label: '12:30 - 13:30', isBreak: false },
-      { id: 'slot_7', label: '13:30 - 14:30', isBreak: false }
-    ];
-  }
-
-  function saveDataToCloud(data) {
-    if (!currentFirebaseUser || !cloudDataReady || applyingCloudData) return Promise.resolve();
-
-    const cleanData = normaliseAppData(data);
-    const payload = {
-      ...cleanData,
-      updatedAt: serverTimestamp()
-    };
-
-    // Encadenamos las escrituras para evitar que dos cambios rápidos se pisen.
-    cloudSavePromise = cloudSavePromise
-      .catch(() => {})
-      .then(() => setDoc(getUserDataRef(currentFirebaseUser), payload, { merge: true }))
-      .then(() => {
-        hasPendingLocalChanges = false;
-      });
-
-    cloudSavePromise.catch(error => {
-      console.error('Error guardando datos en Firestore:', error);
-      if (window.showToast) window.showToast('No se pudieron sincronizar los datos con la nube.', 'danger');
-    });
-
-    return cloudSavePromise;
-  }
-
-  window.saveDataToCloud = saveDataToCloud;
-
-  async function loadUserDataFromCloud(user) {
-    if (!user) return;
-
-    await waitForDomReady();
-
-    if (unsubscribeUserData) {
-      unsubscribeUserData();
-      unsubscribeUserData = null;
-    }
-
-    currentFirebaseUser = user;
-    cloudDataReady = false;
-
-    const userRef = getUserDataRef(user);
-
-    try {
-      const snapshot = await getDoc(userRef);
-
-      if (snapshot.exists()) {
-        applyingCloudData = true;
-        window.appData = normaliseAppData(snapshot.data());
-        localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
-        applyingCloudData = false;
-        cloudDataReady = true;
-        renderApp();
-      } else {
-        // Primera sincronización: conserva los datos locales existentes de este dispositivo.
-        window.appData = normaliseAppData(window.appData);
-        cloudDataReady = true;
-        await saveDataToCloud(window.appData);
-        localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
-        renderApp();
-      }
-
-      // A partir de aquí, cualquier cambio hecho en otro dispositivo se refleja automáticamente.
-      unsubscribeUserData = onSnapshot(userRef, (liveSnapshot) => {
-        if (!liveSnapshot.exists()) return;
-
-        const remoteData = normaliseAppData(liveSnapshot.data());
-        const remoteJson = JSON.stringify(remoteData);
-        const localJson = JSON.stringify(normaliseAppData(window.appData));
-
-        if (remoteJson === localJson) {
-          hasPendingLocalChanges = false;
-          return;
-        }
-
-        // Si acabamos de cambiar una falta, no sustituyas el estado local con
-        // un snapshot remoto que todavía no contiene ese cambio.
-        if (hasPendingLocalChanges) return;
-
-        applyingCloudData = true;
-        window.appData = remoteData;
-        localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
-        applyingCloudData = false;
-        renderApp();
-      }, (error) => {
-        console.error('Error escuchando Firestore:', error);
-        if (window.showToast) window.showToast('Se perdió la sincronización con la nube.', 'warning');
-      });
-    } catch (error) {
-      applyingCloudData = false;
-      console.error('Error cargando datos de Firestore:', error);
-      // Si no hay conexión, seguimos usando la copia local del dispositivo.
-      cloudDataReady = false;
-      if (window.showToast) window.showToast('No se pudo acceder a la nube. Se usarán los datos locales.', 'warning');
-      renderApp();
-    }
-  }
+  let currentUser = null;
 
   // Escuchar el estado de autenticación de usuario
   onAuthStateChanged(auth, async (user) => {
+    currentUser = user;
     const authContainer = document.getElementById('auth-container');
     const mainContent = document.getElementById('main-content');
     const userInfoBar = document.getElementById('user-info-bar');
     const userEmailDisplay = document.getElementById('user-email-display');
     const proximasClasesSection = document.getElementById('proximas-clases-section');
-
-    if (unsubscribeUserData) {
-      unsubscribeUserData();
-      unsubscribeUserData = null;
-    }
-
-    currentFirebaseUser = user;
-    cloudDataReady = false;
 
     if (user) {
       if (authContainer) authContainer.classList.add('hidden');
@@ -337,7 +167,9 @@
       if (userEmailDisplay) userEmailDisplay.textContent = user.displayName || (user.email ? user.email.split('@')[0] : 'Usuario');
       if (proximasClasesSection) proximasClasesSection.classList.remove('hidden');
 
-      await loadUserDataFromCloud(user);
+      // Cargar datos del usuario desde Firestore
+      await loadDataFromCloud(user.uid);
+      if (window.renderApp) window.renderApp(true);
     } else {
       if (authContainer) authContainer.classList.remove('hidden');
       if (mainContent) mainContent.classList.add('hidden');
@@ -346,8 +178,35 @@
     }
   });
 
-// Exponer las funciones globalmente en `window` para que funcionen con los atributos `onclick` del HTML
+  // Guardar datos en la nube (Firestore)
+  window.saveDataToCloud = async (data) => {
+    if (!currentUser) return;
+    try {
+      const userRef = doc(db, "users", currentUser.uid);
+      await setDoc(userRef, { appData: data }, { merge: true });
+    } catch (error) {
+      console.error("Error al guardar en la nube:", error);
+    }
+  };
 
+  // Cargar datos desde la nube (Firestore)
+  async function loadDataFromCloud(uid) {
+    try {
+      const userRef = doc(db, "users", uid);
+      const docSnap = await getDoc(userRef);
+      if (docSnap.exists() && docSnap.data().appData) {
+        window.appData = docSnap.data().appData;
+        localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+      } else {
+        // Si no existen datos guardados en la nube, guarda el estado actual
+        window.saveDataToCloud(window.appData);
+      }
+    } catch (error) {
+      console.error("Error al cargar de la nube:", error);
+    }
+  }
+
+  // Funciones globales de autenticación
   window.iniciarSesion = async (username, password) => {
     if (!username || !password) {
       if (window.showToast) window.showToast('Por favor, introduce usuario y contraseña.', 'warning');
@@ -1019,6 +878,9 @@
     </div>
 
     <script>
+        // Guardar estado de la pestaña activa
+        let currentMainTab = 'schedule';
+
         // Mostrar / ocultar la contraseña
         function togglePasswordVisibility() {
             const passwordInput = document.getElementById('auth-password');
@@ -1095,7 +957,7 @@
         window.addEventListener('DOMContentLoaded', () => {
             loadFromLocalStorage();
             initTheme();
-            renderApp();
+            renderApp(true);
         });
 
         // Extraer hora de inicio de un string de hora (Ej: "08:00 - 09:00" -> 8.0)
@@ -1182,36 +1044,39 @@
             const savedData = localStorage.getItem('attendance_app_hours_data');
             if (savedData) {
                 try {
-                    window.appData = normaliseAppData(JSON.parse(savedData));
-                    return;
+                    window.appData = JSON.parse(savedData);
+                    if (window.appData.globalLimit === undefined) window.appData.globalLimit = 15;
+                    if (!window.appData.subjects) window.appData.subjects = [];
+                    if (!window.appData.schedule) window.appData.schedule = {};
+                    if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
+                    if (!window.appData.timeSlots || window.appData.timeSlots.length === 0) {
+                        window.appData.timeSlots = getDefaultTimeSlots();
+                    }
                 } catch (e) {
-                    console.error("Error al cargar datos locales", e);
+                    console.error("Error al cargar datos", e);
                 }
+            } else {
+                window.appData = {
+                    globalLimit: 15,
+                    subjects: [
+                        { id: '1', name: 'Álgebra y Geometría', totalHours: 60, absences: 2, customLimit: null },
+                        { id: '2', name: 'Programación Web', totalHours: 80, absences: 5, customLimit: 20 },
+                        { id: '3', name: 'Bases de Datos', totalHours: 50, absences: 0, customLimit: null }
+                    ],
+                    timeSlots: getDefaultTimeSlots(),
+                    schedule: {
+                        "0_slot_1": "1",
+                        "0_slot_2": "1",
+                        "1_slot_1": "2",
+                        "1_slot_2": "2",
+                        "2_slot_3": "3",
+                        "3_slot_5": "2",
+                        "4_slot_6": "1"
+                    },
+                    absenceLogs: []
+                };
+                saveToLocalStorage();
             }
-
-            window.appData = {
-                globalLimit: 15,
-                subjects: [
-                    { id: '1', name: 'Álgebra y Geometría', totalHours: 60, absences: 2, customLimit: null },
-                    { id: '2', name: 'Programación Web', totalHours: 80, absences: 5, customLimit: 20 },
-                    { id: '3', name: 'Bases de Datos', totalHours: 50, absences: 0, customLimit: null }
-                ],
-                timeSlots: getDefaultTimeSlots(),
-                schedule: {
-                    "0_slot_1": "1",
-                    "0_slot_2": "1",
-                    "1_slot_1": "2",
-                    "1_slot_2": "2",
-                    "2_slot_3": "3",
-                    "3_slot_5": "2",
-                    "4_slot_6": "1"
-                },
-                absenceLogs: []
-            };
-
-            // La copia local se conserva, pero no se sube a la nube hasta que
-            // Firebase confirme qué usuario está autenticado.
-            localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
         }
 
         function getDefaultTimeSlots() {
@@ -1228,13 +1093,8 @@
 
         window.saveToLocalStorage = function() {
             localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
-            hasPendingLocalChanges = true;
-
-            if (window.saveDataToCloud && !applyingCloudData) {
-                clearTimeout(cloudSaveTimer);
-                cloudSaveTimer = setTimeout(() => {
-                    window.saveDataToCloud(window.appData);
-                }, 150);
+            if (window.saveDataToCloud) {
+                window.saveDataToCloud(window.appData);
             }
         };
 
@@ -1281,6 +1141,7 @@
         };
 
         function switchMainTab(tab) {
+            currentMainTab = tab;
             const btnSchedule = document.getElementById('tabBtnSchedule');
             const btnFaltas = document.getElementById('tabBtnFaltas');
 
@@ -1348,7 +1209,7 @@
             }
         }
 
-        window.renderApp = function() {
+        window.renderApp = function(isInitialLoad = false) {
             const badge = document.getElementById('globalLimitBadge');
             if (badge) badge.textContent = window.appData.globalLimit + '%';
             
@@ -1357,7 +1218,12 @@
             renderScheduleTable();
             renderSubjectsList();
             renderHistorySection();
-            switchMainTab('schedule');
+            
+            if (isInitialLoad) {
+                switchMainTab('schedule');
+            } else {
+                switchMainTab(currentMainTab);
+            }
         };
 
         function renderStats() {
@@ -1572,10 +1438,10 @@
                             if (isAbsent) {
                                 daysCellsHtmlFaltas += `
                                     <td class="p-2 text-center align-middle">
-                                        <button type="button" aria-label="Falta registrada en ${escapeHtml(subject.name)}" title="Falta registrada — pulsa para quitarla" onclick="toggleAbsenceSlot(${dayIdx}, '${slot.id}')" class="absence-marked w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 bg-red-600 text-white border-red-700 dark:bg-red-600 dark:text-white dark:border-red-700" style="background-color:#dc2626 !important;color:#ffffff !important;border-color:#b91c1c !important;">
+                                        <button onclick="toggleAbsenceSlot(${dayIdx}, '${slot.id}')" class="w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 bg-rose-600 text-white border-rose-700">
                                             <span class="font-bold truncate max-w-full">${escapeHtml(subject.name)}</span>
-                                            <span class="absence-badge text-[10px] font-semibold flex items-center gap-1 bg-red-800 px-2 py-0.5 rounded-full text-white" style="background-color:#991b1b !important;color:#ffffff !important;">
-                                                <i class="fa-solid fa-xmark"></i> FALTA
+                                            <span class="text-[10px] font-semibold flex items-center gap-1 bg-rose-700 px-2 py-0.5 rounded-full">
+                                                <i class="fa-solid fa-xmark"></i> Falta
                                             </span>
                                         </button>
                                     </td>`;
@@ -1647,11 +1513,7 @@
             }
 
             saveToLocalStorage();
-            // Renderizar inmediatamente el horario de faltas. El cambio es optimista:
-            // la celda pasa a rojo y muestra FALTA sin esperar a Firestore.
-            renderScheduleTable();
-            renderStats();
-            renderHistorySection();
+            renderApp();
         }
 
         function markFullDayAbsence(dayIdx) {
@@ -2183,35 +2045,46 @@
             const sortedLogs = [...window.appData.absenceLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
             sortedLogs.forEach(log => {
-                const logEl = document.createElement('div');
-                logEl.className = "p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs";
-                logEl.innerHTML = `
+                const dateParts = log.date.split('-');
+                const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
+
+                const logCard = document.createElement('div');
+                logCard.className = "p-3.5 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs";
+                logCard.innerHTML = `
                     <div>
-                        <span class="font-bold text-slate-800 dark:text-slate-100 block">${escapeHtml(log.subjectName)}</span>
-                        <span class="text-[11px] text-slate-500 dark:text-slate-400">${escapeHtml(log.date)} • ${escapeHtml(log.slotLabel)}</span>
+                        <div class="font-bold text-slate-800 dark:text-slate-100">${escapeHtml(log.subjectName)}</div>
+                        <div class="text-[11px] text-slate-400 mt-0.5">
+                            <i class="fa-regular fa-calendar mr-1"></i>${formattedDate} • <i class="fa-regular fa-clock ml-1 mr-1"></i>${escapeHtml(log.slotLabel)}
+                        </div>
                     </div>
-                    <button onclick="removeAbsenceLogById('${log.id}')" title="Borrar este registro" class="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition flex items-center justify-center">
-                        <i class="fa-solid fa-trash-can text-[11px]"></i>
-                    </button>
+                    <span class="px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 text-[10px] font-bold">
+                        Falta
+                    </span>
                 `;
-                container.appendChild(logEl);
+                container.appendChild(logCard);
             });
         }
+        function deleteSubject(subjectId) {
+            if (!confirm('¿Seguro que deseas eliminar esta asignatura? Se borrará también de tu horario.')) return;
 
-        function removeAbsenceLogById(logId) {
-            const index = window.appData.absenceLogs.findIndex(l => l.id === logId);
-            if (index >= 0) {
-                const log = window.appData.absenceLogs[index];
-                const subject = window.appData.subjects.find(s => s.id === log.subjectId);
-                if (subject) {
-                    subject.absences = Math.max(0, subject.absences - 1);
+            window.appData.subjects = window.appData.subjects.filter(s => s.id !== subjectId);
+            
+            Object.keys(window.appData.schedule).forEach(key => {
+                if (window.appData.schedule[key] === subjectId) {
+                    delete window.appData.schedule[key];
                 }
-                window.appData.absenceLogs.splice(index, 1);
-                saveToLocalStorage();
-                renderApp();
-                showToast('Registro eliminado', 'info');
-            }
+            });
+
+            saveToLocalStorage();
+            renderApp();
+            showToast('Asignatura eliminada', 'info');
         }
+
+        function renderHistorySection() {
+            // Lógica para renderizar historial de faltas
+        }
+
     </script>
 </body>
+
 </html>
