@@ -111,131 +111,29 @@
           color: #0f172a;
         }
     </style>
-    <!-- SDKs de Firebase (Versión modular compatible con CDN) -->
     <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-      import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-      import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
 
-      // 1. Configuración de tu proyecto
-      const firebaseConfig = {
-        apiKey: "TU_API_KEY",
-        authDomain: "tu-proyecto.firebaseapp.com",
-        projectId: "tu-proyecto",
-        storageBucket: "tu-proyecto.appspot.com",
-        messagingSenderId: "TU_MESSAGING_SENDER_ID",
-        appId: "TU_APP_ID"
-      };
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyBapjfSE61etzDjye-bFN5x6XcP_5s1nTo",
+    authDomain: "control-faltas-26.firebaseapp.com",
+    projectId: "control-faltas-26",
+    storageBucket: "control-faltas-26.firebasestorage.app",
+    messagingSenderId: "1036495041102",
+    appId: "1:1036495041102:web:f623dfb2a046abafca891f",
+    measurementId: "G-9REG1X986N"
+  };
 
-      // Inicializar Firebase
-      const app = initializeApp(firebaseConfig);
-      const auth = getAuth(app);
-      const db = getFirestore(app);
-      const provider = new GoogleAuthProvider();
-
-      // Variables globales para tu app
-      window.currentUser = null;
-
-      // Controlar estado de sesión
-      onAuthStateChanged(auth, async (user) => {
-        const authContainer = document.getElementById('auth-container');
-        const mainContent = document.getElementById('main-content');
-        const userEmailDisplay = document.getElementById('user-email-display');
-
-        if (user) {
-          window.currentUser = user;
-          console.log("Usuario logueado:", user.email);
-          if (authContainer) authContainer.classList.add('hidden');
-          if (mainContent) mainContent.classList.remove('hidden');
-          if (userEmailDisplay) userEmailDisplay.innerText = user.email || user.displayName;
-
-          await loadUserDataFromCloud(user.uid);
-        } else {
-          window.currentUser = null;
-          console.log("No hay usuario activo");
-          if (authContainer) authContainer.classList.remove('hidden');
-          if (mainContent) mainContent.classList.add('hidden');
-          if (userEmailDisplay) userEmailDisplay.innerText = '';
-        }
-      });
-
-      // Autenticación por Correo
-      window.iniciarSesion = function(email, password) {
-        if (!email || !password) {
-            if (window.showToast) window.showToast("Por favor ingresa correo y contraseña", "warning");
-            return;
-        }
-        signInWithEmailAndPassword(auth, email, password)
-          .then((userCredential) => {
-            if (window.showToast) window.showToast("Sesión iniciada correctamente", "success");
-          })
-          .catch((error) => {
-            console.error("Error inicio sesión:", error);
-            if (window.showToast) window.showToast("Error al iniciar sesión: " + error.message, "danger");
-          });
-      };
-
-      window.registrarUsuario = function(email, password) {
-        if (!email || !password) {
-            if (window.showToast) window.showToast("Por favor ingresa correo y contraseña", "warning");
-            return;
-        }
-        createUserWithEmailAndPassword(auth, email, password)
-          .then((userCredential) => {
-            if (window.showToast) window.showToast("Cuenta creada exitosamente", "success");
-          })
-          .catch((error) => {
-            console.error("Error registro:", error);
-            if (window.showToast) window.showToast("Error al registrarse: " + error.message, "danger");
-          });
-      };
-
-      window.loginWithGoogle = function() {
-        signInWithPopup(auth, provider)
-          .then((result) => {
-            if (window.showToast) window.showToast("¡Bienvenido/a " + result.user.displayName + "!", "success");
-          }).catch((error) => {
-            console.error("Error en Google login:", error);
-            if (window.showToast) window.showToast("Error con Google Auth: " + error.message, "danger");
-          });
-      };
-
-      window.logoutUser = function() {
-        signOut(auth).then(() => {
-          if (window.showToast) window.showToast("Sesión cerrada correctamente", "info");
-        }).catch((error) => {
-          console.error("Error al cerrar sesión:", error);
-        });
-      };
-
-      window.saveDataToCloud = async function(appData) {
-        if (!window.currentUser) return;
-        try {
-          const userDocRef = doc(db, "users", window.currentUser.uid);
-          await setDoc(userDocRef, { data: appData, updatedAt: new Date() });
-          console.log("Datos guardados en la nube.");
-        } catch (e) {
-          console.error("Error al guardar en la nube: ", e);
-        }
-      };
-
-      async function loadUserDataFromCloud(uid) {
-        try {
-          const userDocRef = doc(db, "users", uid);
-          const docSnap = await getDoc(userDocRef);
-          if (docSnap.exists()) {
-            const cloudData = docSnap.data().data;
-            if (cloudData && window.renderApp) {
-                window.appData = cloudData;
-                window.saveToLocalStorage();
-                window.renderApp();
-            }
-          }
-        } catch (e) {
-          console.error("Error al leer de la nube:", e);
-        }
-      }
-    </script>
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+</script>
 </head>
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
