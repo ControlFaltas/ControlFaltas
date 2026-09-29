@@ -1,14 +1,14 @@
 {
-  "short_name": "Faltas",
-  "name": "Control de Asistencia y Faltas",
+  "short_name": "Control Faltas",
+  "name": "Control de Faltas y Horario",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3135/3135755.png",
+      "src": "azul192.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3135/3135755.png",
+      "src": "azul.png",
       "type": "image/png",
       "sizes": "512x512"
     }
