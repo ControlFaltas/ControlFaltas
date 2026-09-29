@@ -1,6 +1,6 @@
 {
-  "short_name": "Control Faltas",
-  "name": "Control de Faltas y Horario",
+  "short_name": "Control de Faltas",
+  "name": "Control de Faltas",
   "icons": [
     {
       "src": "azul192.png",
@@ -17,5 +17,6 @@
   "background_color": "#0f172a",
   "theme_color": "#4f46e5",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "version": "2.0.0"
 }
