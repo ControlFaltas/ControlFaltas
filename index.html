@@ -41,7 +41,7 @@
         .floating-info-btn {
           position: fixed;
           bottom: 24px;
-          right: 24px;
+          left: 24px;
           width: 44px;
           height: 44px;
           border-radius: 50%;
@@ -55,6 +55,10 @@
           justify-content: center;
           transition: transform 0.2s ease, background-color 0.2s ease;
           z-index: 999;
+        }
+
+        #main-tabs-nav > div > div {
+          justify-content: center !important;
         }
 
         .floating-info-btn:hover {
@@ -184,6 +188,30 @@
         }
     @media (max-width: 639px) {
       .user-dropdown-chevron { display: none !important; }
+
+      /* En móvil, las pestañas quedan en una segunda fila, justo debajo de la cabecera */
+      header > div.max-w-7xl {
+        height: auto !important;
+        min-height: 64px;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      header > div.max-w-7xl > div:nth-child(2) {
+        display: contents !important;
+      }
+      #main-tabs-nav {
+        order: 100 !important;
+        flex: 0 0 100% !important;
+        width: 100% !important;
+        position: static !important;
+        top: auto !important;
+        left: auto !important;
+        right: auto !important;
+        margin-top: 6px;
+        margin-bottom: 2px;
+      }
 
       /* Pestañas principales centradas en móvil */
       #main-tabs-nav > div { padding-left: 12px; padding-right: 12px; }
@@ -346,6 +374,20 @@
 .dark .password-requirement.ok{color:#4ade80}
 .password-requirement i{font-size:9px}
 @media(max-width:640px){.password-change-modal{padding:20px;border-radius:22px}}
+
+        /* Agenda: títulos contenidos y detalles en ventana flotante */
+        .agenda-card-title {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            line-height: 1.35;
+            max-width: 100%;
+        }
+        .agenda-card-details { display:none !important; }
+        #agendaDetailsModal .agenda-detail-value { overflow-wrap:anywhere; word-break:break-word; white-space:pre-wrap; }
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
@@ -361,7 +403,8 @@
     EmailAuthProvider,
     sendPasswordResetEmail,
     reauthenticateWithCredential,
-    updatePassword
+    updatePassword,
+    updateProfile
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
   
   import { 
@@ -369,6 +412,8 @@
     ref, 
     set,
     get,
+    push,
+    update,
     onValue,
     off 
   } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
@@ -388,6 +433,15 @@
   const analytics = getAnalytics(app);
   const auth = getAuth(app);
   const db = getDatabase(app);
+  // Exponer Firebase al script principal (que no es type="module").
+  window.firebaseDb = db;
+  window.firebaseRef = ref;
+  window.firebaseSet = set;
+  window.firebaseGet = get;
+  window.firebasePush = push;
+  window.firebaseUpdate = update;
+  window.firebaseOnValue = onValue;
+  window.firebaseOff = off;
 
   // Estos helpers se importan en el módulo de Firebase, pero el formulario
   // de cambio de contraseña está en otro <script>. Los hacemos globales.
@@ -421,6 +475,14 @@
         const profile = profileSnapshot.exists() ? profileSnapshot.val() : null;
         if (profile?.username) {
           displayUsername = profile.username;
+          // El username es el nombre visible de la cuenta; el correo real nunca se muestra.
+          try {
+            if (user.displayName !== profile.username) {
+              await updateProfile(user, { displayName: profile.username });
+            }
+          } catch (profileNameError) {
+            console.warn('No se pudo sincronizar el nombre visible de Firebase:', profileNameError);
+          }
           // Migra automáticamente cuentas creadas con la versión anterior: si
           // aún no existe el índice, lo crea al iniciar sesión.
           try {
@@ -436,10 +498,9 @@
       } catch (error) {
         console.warn('No se pudo leer el perfil del usuario:', error);
       }
-      if (userEmailDisplay) userEmailDisplay.textContent = displayUsername || (user.email ? user.email.split('@')[0] : 'Usuario');
-      if (proximasClasesSection) proximasClasesSection.classList.remove('hidden');
-
-      listenToCloudData(user.uid);
+      if (userEmailDisplay) userEmailDisplay.textContent = displayUsername || 'Usuario';
+      if (proximasClasesSection) proximasClasesSection.classList.add('hidden');
+      showModeSelection();
     } else {
       if (userDbRef) {
         off(userDbRef);
@@ -451,6 +512,13 @@
       openLoginPrivacy();
       if (userInfoBar) userInfoBar.classList.add('hidden');
       if (proximasClasesSection) proximasClasesSection.classList.add('hidden');
+      const modeSelection = document.getElementById('mode-selection');
+      if (modeSelection) modeSelection.classList.add('hidden');
+      const classBtn = document.getElementById('classHeaderBtn');
+      if (classBtn) classBtn.classList.add('hidden');
+      stopDataListener();
+      window.activeClassId = null;
+      window.activeDataMode = null;
     }
   });
 
@@ -469,6 +537,7 @@
             window.appData.agendaTasks = [];
         }
         localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+        localStorage.setItem('attendance_private_app_data', JSON.stringify(window.appData));
         if (window.renderApp) window.renderApp(false);
         isRemoteUpdate = false;
       } else {
@@ -482,11 +551,92 @@
     });
   }
 
+  // En una clase compartida, el horario y las asignaturas son comunes,
+  // pero las faltas pertenecen exclusivamente al alumno que las registra.
+  window.classPersonalAttendance = { absenceLogs: [], excludedSubjectIds: [], completedAgendaIds: [], hiddenAgendaIds: [] };
+
+  window.applyClassPersonalAttendance = function(data) {
+    const copy = JSON.parse(JSON.stringify(data || {}));
+    copy.absenceLogs = Array.isArray(window.classPersonalAttendance?.absenceLogs)
+      ? window.classPersonalAttendance.absenceLogs
+      : [];
+    const counts = {};
+    copy.absenceLogs.forEach(log => {
+      if (log && log.subjectId) counts[log.subjectId] = (counts[log.subjectId] || 0) + 1;
+    });
+    const excluded = new Set(window.classPersonalAttendance?.excludedSubjectIds || []);
+    const completedAgendaIds = new Set(window.classPersonalAttendance?.completedAgendaIds || []);
+    const hiddenAgendaIds = new Set(window.classPersonalAttendance?.hiddenAgendaIds || []);
+    copy.subjects = (copy.subjects || []).map(subject => ({
+      ...subject,
+      enrolled: !excluded.has(subject.id),
+      absences: counts[subject.id] || 0
+    }));
+    copy.agendaTasks = (copy.agendaTasks || []).map(task => ({
+      ...task,
+      completed: completedAgendaIds.has(task.id),
+      hiddenForMe: hiddenAgendaIds.has(task.id)
+    }));
+    return copy;
+  };
+
+  window.loadClassPersonalAttendance = async function(classId, uid) {
+    window.classPersonalAttendance = { absenceLogs: [], excludedSubjectIds: [], completedAgendaIds: [], hiddenAgendaIds: [] };
+    try {
+      const snap = await get(ref(db, 'classAttendance/' + classId + '/' + uid));
+      const data = snap.val();
+      if (data && Array.isArray(data.absenceLogs)) {
+        window.classPersonalAttendance.absenceLogs = data.absenceLogs;
+      }
+      if (data && Array.isArray(data.excludedSubjectIds)) {
+        window.classPersonalAttendance.excludedSubjectIds = data.excludedSubjectIds;
+      }
+      if (data && Array.isArray(data.completedAgendaIds)) {
+        window.classPersonalAttendance.completedAgendaIds = data.completedAgendaIds;
+      }
+      if (data && Array.isArray(data.hiddenAgendaIds)) {
+        window.classPersonalAttendance.hiddenAgendaIds = data.hiddenAgendaIds;
+      }
+    } catch (error) {
+      console.error('Error cargando los datos personales de la clase:', error);
+    }
+  };
+
+  window.saveClassPersonalAttendance = async function(classId, uid) {
+    if (!classId || !uid || isRemoteUpdate) return;
+    try {
+      await set(ref(db, 'classAttendance/' + classId + '/' + uid), {
+        absenceLogs: window.classPersonalAttendance?.absenceLogs || [],
+        excludedSubjectIds: window.classPersonalAttendance?.excludedSubjectIds || [],
+        completedAgendaIds: window.classPersonalAttendance?.completedAgendaIds || [],
+        hiddenAgendaIds: window.classPersonalAttendance?.hiddenAgendaIds || []
+      });
+      localStorage.setItem(
+        'attendance_shared_personal_' + classId + '_' + uid,
+        JSON.stringify(window.classPersonalAttendance || { absenceLogs: [], excludedSubjectIds: [], completedAgendaIds: [], hiddenAgendaIds: [] })
+      );
+    } catch (error) {
+      console.error('Error guardando las faltas personales de la clase:', error);
+    }
+  };
+
   window.saveDataToCloud = async (data) => {
     if (!currentUser || isRemoteUpdate) return;
     try {
-      const dataRef = ref(db, 'users/' + currentUser.uid + '/appData');
-      await set(dataRef, data);
+      if (window.activeClassId) {
+        // Nunca subimos las faltas personales al appData compartido.
+        const sharedData = JSON.parse(JSON.stringify(data || {}));
+        delete sharedData.absenceLogs;
+        sharedData.subjects = (sharedData.subjects || []).map(subject => {
+          const clean = { ...subject, absences: 0 };
+          delete clean.enrolled;
+          return clean;
+        });
+        await set(ref(db, 'classes/' + window.activeClassId + '/appData'), sharedData);
+        await window.saveClassPersonalAttendance(window.activeClassId, currentUser.uid);
+      } else {
+        await set(ref(db, 'users/' + currentUser.uid + '/appData'), data);
+      }
     } catch (error) {
       console.error("Error al guardar en Realtime Database:", error);
     }
@@ -568,6 +718,7 @@
 
     try {
       const credential = await createUserWithEmailAndPassword(auth, authEmail, password);
+      await updateProfile(credential.user, { displayName: username });
       await set(ref(db, `users/${credential.user.uid}/profile`), {
         username,
         identifier: authEmail,
@@ -684,23 +835,26 @@
 <style>
 /* Pestañas principales: estilo flotante centrado en escritorio */
 @media (min-width: 768px) {
+  /* En escritorio las pestañas quedan siempre visibles justo debajo de la cabecera. */
   #main-tabs-nav {
-    position: fixed !important;
-    top: 8px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    width: auto !important;
-    max-width: calc(100vw - 520px) !important;
-    height: 48px !important;
+    position: sticky !important;
+    top: 64px !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
     padding: 0 !important;
-    background: transparent !important;
+    background: rgba(255,255,255,.96) !important;
     border: 0 !important;
-    box-shadow: none !important;
-    z-index: 60 !important;
+    box-shadow: 0 4px 14px rgba(15,23,42,.06) !important;
+    backdrop-filter: blur(12px);
+    z-index: 70 !important;
   }
+  .dark #main-tabs-nav { background: rgba(15,23,42,.96) !important; }
   #main-tabs-nav > div {
-    height: 48px !important;
-    padding: 0 !important;
+    height: auto !important;
+    padding: 8px 16px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
@@ -732,6 +886,18 @@
 /* En móvil conserva el diseño actual, debajo de la cabecera */
 @media (max-width: 767px) {
   #main-tabs-nav { position: sticky !important; top: 64px !important; }
+
+  /* En móvil, el menú de cuenta se abre justo debajo del icono
+     y queda por encima de las pestañas principales. */
+  #userDropdownMenu {
+    position: fixed !important;
+    top: 56px !important;
+    right: 12px !important;
+    left: auto !important;
+    margin-top: 0 !important;
+    z-index: 999999 !important;
+    max-width: calc(100vw - 24px);
+  }
 }
 </style>
 
@@ -758,11 +924,277 @@
     border-bottom-right-radius: 16px !important;
 }
 </style>
+
+<style>
+  /* Pestañas centradas en la cabecera, recuperando el formato anterior */
+  header { position: sticky; }
+  #main-tabs-nav {
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    z-index: 80 !important;
+  }
+  #main-tabs-nav > div {
+    padding: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  #main-tabs-nav > div > div {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    padding: 4px !important;
+    overflow: visible !important;
+    background: rgba(248,250,252,.92) !important;
+    border: 1px solid rgba(226,232,240,.9) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 6px 18px rgba(15,23,42,.10) !important;
+    backdrop-filter: blur(10px);
+  }
+  .dark #main-tabs-nav > div > div {
+    background: rgba(30,41,59,.92) !important;
+    border-color: rgba(71,85,105,.8) !important;
+  }
+  #main-tabs-nav button {
+    min-height: 38px !important;
+    padding: 9px 14px !important;
+    border-radius: 12px !important;
+  }
+  @media (max-width: 767px) {
+    #main-tabs-nav { left: 50% !important; right: auto !important; }
+    #main-tabs-nav > div { padding: 2px !important; }
+    #main-tabs-nav > div > div { gap: 2px !important; padding: 3px !important; }
+    #main-tabs-nav button { padding: 8px 9px !important; min-height: 36px !important; }
+  }
+</style>
+<style>
+/* Ajuste final: pestañas debajo de la cabecera en móvil */
+@media (max-width: 767px) {
+  header {
+    height: 112px !important;
+    min-height: 112px !important;
+    position: sticky !important;
+    top: 0 !important;
+    overflow: visible !important;
+  }
+  header > div {
+    height: 64px !important;
+    min-height: 64px !important;
+  }
+  #main-tabs-nav {
+    position: absolute !important;
+    top: 64px !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    transform: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 48px !important;
+    background: rgba(255,255,255,.96) !important;
+    border: 0 !important;
+    border-top: 1px solid rgba(226,232,240,.75) !important;
+    border-bottom: 1px solid rgba(226,232,240,.9) !important;
+    box-shadow: 0 4px 14px rgba(15,23,42,.07) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 80 !important;
+  }
+  .dark #main-tabs-nav {
+    background: rgba(15,23,42,.96) !important;
+    border-color: rgba(51,65,85,.9) !important;
+  }
+  #main-tabs-nav > div {
+    height: 48px !important;
+    padding: 4px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  #main-tabs-nav > div > div {
+    width: 100% !important;
+    max-width: 420px !important;
+    height: 40px !important;
+    padding: 3px !important;
+    gap: 3px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: visible !important;
+    background: rgba(248,250,252,.92) !important;
+    border: 1px solid rgba(226,232,240,.9) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 4px 12px rgba(15,23,42,.08) !important;
+  }
+  .dark #main-tabs-nav > div > div {
+    background: rgba(30,41,59,.92) !important;
+    border-color: rgba(71,85,105,.8) !important;
+  }
+  #main-tabs-nav button {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    min-height: 34px !important;
+    height: 34px !important;
+    padding: 6px 8px !important;
+    border-radius: 11px !important;
+    justify-content: center !important;
+    font-size: 12px !important;
+  }
+  /* El selector Local/Clase conserva fondo azul e icono blanco */
+  #dataModeButton {
+    background: #2563eb !important;
+    border-color: #2563eb !important;
+    color: #fff !important;
+  }
+  #dataModeIcon {
+    color: #fff !important;
+  }
+}
+
+/* También forzamos el color blanco del icono cuando JavaScript actualiza el modo. */
+#dataModeIcon { color: #fff !important; }
+</style>
+
+
+<style id="mode-banner-fixed">
+/* Indicadores de modo: pegados justo debajo del header y siempre visibles al hacer scroll */
+#activeClassBanner, #privateModeBanner {
+  position: sticky !important;
+  top: 64px !important;
+  z-index: 75 !important;
+  width: 100% !important;
+  margin: 0 !important;
+  min-height: 32px !important;
+}
+#activeClassBanner {
+  background: linear-gradient(90deg, rgba(16,185,129,.58), rgba(34,211,238,.48), rgba(59,130,246,.42)) !important;
+  border-bottom: 1px solid rgba(45,212,191,.45) !important;
+  box-shadow: 0 3px 16px rgba(16,185,129,.20), inset 0 1px 0 rgba(255,255,255,.24) !important;
+  backdrop-filter: blur(12px) saturate(145%) !important; -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+}
+#activeClassBanner > div { color: #065f46 !important; text-shadow: 0 1px 2px rgba(255,255,255,.55) !important; }
+#activeClassBanner i, #activeClassBanner span { color: #065f46 !important; text-shadow: 0 1px 2px rgba(255,255,255,.55) !important; }
+#activeClassBanner button { background: rgba(255,255,255,.72) !important; border-color: rgba(45,212,191,.45) !important; color: #047857 !important; box-shadow: 0 2px 8px rgba(16,185,129,.15) !important; }
+.dark #activeClassBanner { background: linear-gradient(90deg, rgba(5,150,105,.62), rgba(13,148,136,.52), rgba(37,99,235,.48)) !important; border-bottom-color: rgba(94,234,212,.42) !important; box-shadow: 0 3px 18px rgba(20,184,166,.20), inset 0 1px 0 rgba(255,255,255,.12) !important; }
+.dark #activeClassBanner > div, .dark #activeClassBanner i, .dark #activeClassBanner span { color: #ecfdf5 !important; text-shadow: 0 1px 3px rgba(0,0,0,.45) !important; }
+.dark #activeClassBanner button { background: rgba(15,23,42,.58) !important; border-color: rgba(94,234,212,.38) !important; color: #99f6e4 !important; }
+#privateModeBanner {
+  background: linear-gradient(90deg, rgba(249,115,22,.56), rgba(245,158,11,.48), rgba(236,72,153,.40)) !important;
+  border-bottom: 1px solid rgba(251,146,60,.46) !important;
+  box-shadow: 0 3px 16px rgba(249,115,22,.18), inset 0 1px 0 rgba(255,255,255,.24) !important;
+  backdrop-filter: blur(12px) saturate(145%) !important; -webkit-backdrop-filter: blur(12px) saturate(145%) !important;
+}
+#privateModeBanner .private-mode-inner { color: #9a3412 !important; text-shadow: 0 1px 2px rgba(255,255,255,.55) !important; }
+.dark #privateModeBanner { background: linear-gradient(90deg, rgba(194,65,12,.62), rgba(180,83,9,.52), rgba(190,24,93,.48)) !important; border-bottom-color: rgba(253,186,116,.40) !important; box-shadow: 0 3px 18px rgba(249,115,22,.20), inset 0 1px 0 rgba(255,255,255,.12) !important; }
+.dark #privateModeBanner .private-mode-inner { color: #fff7ed !important; text-shadow: 0 1px 3px rgba(0,0,0,.45) !important; }
+@media (max-width: 640px) {
+  #activeClassBanner, #privateModeBanner { top: 64px !important; }
+}
+</style>
+
+<style id="header-menu-style">
+  #user-info-bar { display:none !important; }
+  .floating-info-btn { display:none !important; }
+  #headerToolsMenu { position:absolute; right:0; top:calc(100% + 40px); width:230px; z-index:200 !important; }
+</style>
+
+<style id="mobile-header-spacing">
+@media (max-width: 640px) {
+  #headerControls {
+    gap: 2px !important;
+  }
+  #headerControls > * + * {
+    margin-left: 0 !important;
+  }
+}
+</style>
+
+<style id="final-app-upgrades">
+  .agenda-card-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;line-height:1.35;min-height:2.7em}
+  .agenda-card-details{display:none!important}
+  .agenda-detail-value{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+  .dashboard-card{transition:transform .2s ease,box-shadow .2s ease}
+  .dashboard-card:hover{transform:translateY(-2px)}
+  #mobileBottomNav{display:none}
+  @media(max-width:640px){
+    /* Espacio suficiente para que la barra inferior fija nunca tape el último contenido. */
+    body{padding-bottom:100px}
+    /* Reserva espacio al final para la barra fija, sin crear huecos grandes entre secciones. */
+    #main-content{padding-bottom:115px !important; flex-grow:0 !important}
+    #proximas-clases-section{padding-bottom:24px !important}
+    #mobileBottomNav{display:flex;position:fixed;left:10px;right:10px;bottom:10px;z-index:85;gap:6px;padding:7px;background:rgba(255,255,255,.94);backdrop-filter:blur(16px);border:1px solid rgba(226,232,240,.9);border-radius:20px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
+    .dark #mobileBottomNav{background:rgba(15,23,42,.94);border-color:rgba(71,85,105,.7)}
+    #mobileBottomNav button{flex:1;min-width:0;padding:8px 5px;border-radius:14px;font-size:10px;font-weight:800;color:#64748b;display:flex;flex-direction:column;align-items:center;gap:3px;transition:.2s}
+    .dark #mobileBottomNav button{color:#94a3b8}
+    #mobileBottomNav button.active{background:#2563eb;color:white;box-shadow:0 5px 14px rgba(37,99,235,.25)}
+    /* En móvil el selector flotante se conserva solo para reutilizar su menú; se oculta su botón azul. */
+    #dataModeSwitcher{bottom:92px !important;right:16px !important;z-index:100 !important}
+    #dataModeButton{display:none !important}
+    #dataModeMenu{bottom:0 !important;right:0 !important;z-index:101 !important;width:190px !important}
+    #main-tabs-nav{display:none!important}
+    #stats-summary{grid-template-columns:1fr 1fr!important}
+    #stats-summary>div:last-child{grid-column:1/-1}
+    #dashboardSection{scroll-margin-top:72px}
+  }
+  .student-only-hidden{display:none!important}
+</style>
+
+<style id="tabs-remove-outer-background">
+/* Elimina el rectángulo de fondo exterior de las pestañas; se conserva solo el selector redondeado. */
+#main-tabs-nav {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.dark #main-tabs-nav {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+</style>
+
+<style id="mobile-header-clean-height">
+@media (max-width: 640px) {
+  /* En móvil la cabecera ocupa solo una fila; evita el hueco blanco bajo el nombre. */
+  header {
+    height: 64px !important;
+    min-height: 64px !important;
+  }
+  header > div.max-w-7xl {
+    height: 64px !important;
+    min-height: 64px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    flex-wrap: nowrap !important;
+  }
+  #main-tabs-nav { display: none !important; }
+}
+</style>
+<style id="hide-header-theme-mobile">
+@media (max-width: 640px) {
+  header button[onclick="toggleDarkMode()"] { display: none !important; }
+}
+</style>
 </head>
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
 
-    <header class="bg-white dark:bg-slate-800 border-b-0 sticky top-0 z-30 shadow-none">
+    <header class="bg-white dark:bg-slate-800 border-b-0 sticky top-0 z-[70] shadow-none overflow-visible">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
                 <img src="azul.png" alt="Logo" class="w-10 h-10 rounded-xl object-cover shadow-md">
@@ -772,7 +1204,29 @@
                 </div>
             </div>
             
-            <div class="flex items-center space-x-3">
+            <div id="headerControls" class="flex items-center space-x-3">
+                <!-- PESTAÑAS PRINCIPALES junto al icono de cuenta -->
+                <nav id="main-tabs-nav" class="bg-white dark:bg-slate-800 border-b-0 border-t-0 shadow-none sticky top-16 z-40">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
+            <div class="flex items-center justify-center gap-2 overflow-x-auto">
+                <button id="tabBtnDashboard" onclick="goToDashboard()" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
+                    <i class="fa-solid fa-house"></i><span>Inicio</span>
+                </button>
+                <button id="tabBtnSchedule" onclick="switchMainTab('schedule')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-blue-600 text-white shadow-md shadow-blue-500/20 shrink-0">
+                    <i class="fa-solid fa-calendar-days"></i>
+                    <span>Horario</span>
+                </button>
+                <button id="tabBtnFaltas" onclick="switchMainTab('faltas')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
+                    <i class="fa-solid fa-user-xmark"></i>
+                    <span>Faltas</span>
+                </button>
+                <button id="tabBtnAgenda" onclick="switchMainTab('agenda')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
+                    <i class="fa-solid fa-book-bookmark"></i>
+                    <span>Agenda</span>
+                </button>
+            </div>
+        </div>
+                </nav>
                 <div id="user-info-bar" class="relative hidden sm:block">
                     <button onclick="toggleUserDropdown()" class="flex items-center space-x-2 bg-slate-100 dark:bg-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded-xl border border-slate-200/60 dark:border-slate-600/40 transition">
                         <i class="fa-solid fa-circle-user text-blue-500 text-base"></i>
@@ -795,38 +1249,71 @@
                     </div>
                 </div>
 
-                <button onclick="openSettingsModal()" class="inline-flex items-center space-x-2 text-sm bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 px-3 py-2 rounded-xl transition font-medium">
-                    <i class="fa-solid fa-gear text-blue-500"></i>
-                    <span class="hidden sm:inline">Configurar Límite</span>
-                    <span id="globalLimitBadge" class="hidden bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">15%</span>
+                <button id="classHeaderBtn" onclick="openClassManager()" class="hidden inline-flex items-center space-x-2 text-sm bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-3 py-2 rounded-xl transition font-medium text-blue-700 dark:text-blue-300">
+                    <i class="fa-solid fa-users"></i>
+                    <span class="hidden sm:inline">Clase</span>
                 </button>
 
                 <button onclick="toggleDarkMode()" class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
                     <i id="themeIcon" class="fa-solid fa-moon"></i>
                 </button>
+
+                <div class="relative">
+                    <button id="headerMenuButton" onclick="toggleHeaderToolsMenu()" aria-label="Abrir menú" title="Menú" class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 flex items-center justify-center transition">
+                        <i id="headerMenuIcon" class="fa-solid fa-bars text-slate-600 dark:text-slate-200"></i>
+                    </button>
+                    <div id="headerToolsMenu" class="hidden bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-2 z-[100]">
+                        <button onclick="openSuggestionsModal(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition">
+                            <i class="fa-solid fa-lightbulb w-5 text-amber-500"></i><span>Buzón de sugerencias</span>
+                        </button>
+                        <button onclick="openInfoModal(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition">
+                            <i class="fa-solid fa-circle-info w-5 text-blue-500"></i><span>Información</span>
+                        </button>
+                        <button onclick="openSettingsModal(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
+                            <i class="fa-solid fa-gauge-high w-5 text-blue-500"></i><span>Configurar límite</span>
+                            <span id="globalLimitBadge" class="ml-auto hidden bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">15%</span>
+                        </button>
+                        <button onclick="openHeaderAccountMenu(this);" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
+                            <i class="fa-solid fa-circle-user w-5 text-blue-500"></i><span>Cuenta</span>
+                        </button>
+                    </div>
+                </div>
+
+
             </div>
         </div>
     </header>
 
-    <!-- PESTAÑAS PRINCIPALES: justo debajo del cabezal -->
-    <nav id="main-tabs-nav" class="bg-white dark:bg-slate-800 border-b-0 border-t-0 shadow-none sticky top-16 z-40">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
-            <div class="flex items-center gap-2 overflow-x-auto">
-                <button id="tabBtnSchedule" onclick="switchMainTab('schedule')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-blue-600 text-white shadow-md shadow-blue-500/20 shrink-0">
-                    <i class="fa-solid fa-calendar-days"></i>
-                    <span>Horario</span>
-                </button>
-                <button id="tabBtnFaltas" onclick="switchMainTab('faltas')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
-                    <i class="fa-solid fa-user-xmark"></i>
-                    <span>Faltas</span>
-                </button>
-                <button id="tabBtnAgenda" onclick="switchMainTab('agenda')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
-                    <i class="fa-solid fa-book-bookmark"></i>
-                    <span>Agenda</span>
-                </button>
-            </div>
+    <div id="activeClassBanner" class="hidden w-full border-t border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/30 px-4 py-1.5">
+        <div class="w-full flex items-center justify-center gap-2 min-w-0">
+            <i class="fa-solid fa-users text-emerald-600 dark:text-emerald-400 text-xs shrink-0"></i>
+            <span class="text-[10px] uppercase font-bold tracking-wider text-emerald-600 dark:text-emerald-400 shrink-0">Modo clase</span>
+            <span class="text-xs font-bold text-slate-800 dark:text-slate-100 truncate" id="activeClassBannerName">Clase</span>
+            <button onclick="openClassStudents()" class="shrink-0 ml-1 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition"><i class="fa-solid fa-user-group mr-1"></i>Alumnos</button>
         </div>
+    </div>
+    <nav id="mobileBottomNav" aria-label="Navegación principal móvil">
+        <button id="mobileNavHome" onclick="goToDashboard()"><i class="fa-solid fa-house text-base"></i><span>Inicio</span></button>
+        <button id="mobileNavSchedule" onclick="switchMainTab('schedule')"><i class="fa-solid fa-calendar-days text-base"></i><span>Horario</span></button>
+        <button id="mobileNavAgenda" onclick="switchMainTab('agenda')"><i class="fa-solid fa-book-bookmark text-base"></i><span>Agenda</span></button>
+        <button id="mobileNavFaltas" onclick="switchMainTab('faltas')"><i class="fa-solid fa-user-xmark text-base"></i><span>Faltas</span></button>
+        <button id="mobileNavClass" onclick="handleMobileClassButton(event)"><i class="fa-solid fa-users text-base"></i><span>Clase</span></button>
+        <button onclick="toggleDarkMode()"><i id="mobileThemeIcon" class="fa-solid fa-moon text-base"></i><span>Modo</span></button>
     </nav>
+    <!-- Selector Local / Clase: botón flotante abajo a la derecha -->
+    <div id="dataModeSwitcher" class="hidden fixed bottom-5 right-5 z-[80]">
+        <button id="dataModeButton" type="button" onclick="toggleDataModeMenu()" aria-label="Cambiar entre Privado y Clase" class="w-12 h-12 rounded-xl bg-blue-600 border border-blue-600 shadow-lg flex items-center justify-center text-white hover:bg-blue-700 transition">
+            <i id="dataModeIcon" class="fa-solid fa-user-lock text-white text-lg"></i>
+        </button>
+        <div id="dataModeMenu" class="hidden absolute bottom-14 right-0 w-40 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-1">
+            <button id="modePrivateBtn" onclick="switchToPrivateMode(); closeDataModeMenu();" class="w-full px-3 py-2 rounded-lg text-xs font-bold text-left transition flex items-center gap-2">
+                <i class="fa-solid fa-user-lock w-4 text-blue-500"></i><span>Privado</span>
+            </button>
+            <button id="modeSharedBtn" onclick="switchToSharedMode(); closeDataModeMenu();" class="w-full px-3 py-2 rounded-lg text-xs font-bold text-left transition flex items-center gap-2">
+                <i class="fa-solid fa-users w-4 text-blue-500"></i><span>Clase</span>
+            </button>
+        </div>
+    </div>
 
     <section id="proximas-clases-section" class="proximas-clases-container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 w-full hidden">
       <h2 class="text-lg font-bold">Próximas Clases</h2>
@@ -1065,8 +1552,32 @@
         </div>
     </div>
 
+    <!-- SELECTOR DE MODO: privado/local o clase compartida -->
+    <div id="mode-selection" class="hidden my-auto px-4 py-8 max-w-2xl w-full mx-auto">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-700 shadow-xl">
+            <div class="text-center mb-7">
+                <div class="w-16 h-16 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner">
+                    <i class="fa-solid fa-layer-group"></i>
+                </div>
+                <h2 class="text-2xl font-extrabold mt-4 text-slate-900 dark:text-white">¿Cómo quieres usar la aplicación?</h2>
+                <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Elige si tus datos serán privados o si quieres compartirlos con tu clase.</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button onclick="selectLocalMode()" class="text-left p-5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 bg-slate-50 dark:bg-slate-900/50 transition">
+                    <div class="w-11 h-11 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3"><i class="fa-solid fa-user-lock"></i></div>
+                    <h3 class="font-bold text-slate-900 dark:text-white">Uso privado</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">Tu horario, faltas, tareas y exámenes son solo tuyos.</p>
+                </button>
+                <button onclick="openClassManager()" class="text-left p-5 rounded-2xl border-2 border-blue-200 dark:border-blue-800 hover:border-blue-500 bg-blue-50/60 dark:bg-blue-900/20 transition">
+                    <div class="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center mb-3"><i class="fa-solid fa-users"></i></div>
+                    <h3 class="font-bold text-slate-900 dark:text-white">Usar una clase</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">Crea una clase o únete con un código para compartir horario y agenda.</p>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <main id="main-content" class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 hidden">
-        
         <div id="stats-summary" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center space-x-4">
                 <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xl font-bold">
@@ -1099,6 +1610,56 @@
             </div>
         </div>
 
+        <section id="dashboardSection" class="hidden space-y-4 mb-6">
+            <div class="bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 rounded-3xl p-5 sm:p-6 text-white shadow-xl dashboard-card">
+                <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0">
+                        <p class="text-xs font-bold uppercase tracking-widest text-blue-100">Resumen</p>
+                        <h2 class="text-2xl font-black mt-1 truncate" id="dashboardGreeting">¡Hola!</h2>
+                        <p class="text-sm text-blue-100 mt-1" id="dashboardSubtitle">Aquí tienes lo más importante de hoy.</p>
+                    </div>
+                    <div class="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center shrink-0"><i class="fa-solid fa-sparkles"></i></div>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-5">
+                    <button onclick="switchMainTab('agenda')" class="text-left rounded-2xl bg-white/10 hover:bg-white/15 p-3">
+                        <div class="text-2xl font-black" id="dashPendingCount">0</div><div class="text-[10px] font-bold uppercase tracking-wide text-blue-100">Pendientes</div>
+                    </button>
+                    <button onclick="switchMainTab('agenda')" class="text-left rounded-2xl bg-white/10 hover:bg-white/15 p-3">
+                        <div class="text-2xl font-black" id="dashUpcomingCount">0</div><div class="text-[10px] font-bold uppercase tracking-wide text-blue-100">Próximos 7 días</div>
+                    </button>
+                    <button onclick="switchMainTab('schedule')" class="text-left rounded-2xl bg-white/10 hover:bg-white/15 p-3">
+                        <div class="text-2xl font-black" id="dashSubjectsCount">0</div><div class="text-[10px] font-bold uppercase tracking-wide text-blue-100">Asignaturas</div>
+                    </button>
+                    <button onclick="switchMainTab('faltas')" class="text-left rounded-2xl bg-white/10 hover:bg-white/15 p-3">
+                        <div class="text-2xl font-black" id="dashAbsencesCount">0</div><div class="text-[10px] font-bold uppercase tracking-wide text-blue-100">Faltas</div>
+                    </button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Siguiente clase</p><h3 id="dashboardNextClass" class="font-bold mt-1">Sin clases próximas</h3></div><i class="fa-solid fa-arrow-right text-blue-500"></i></div>
+                    <p id="dashboardNextClassMeta" class="text-xs text-slate-500 dark:text-slate-400">Consulta tu horario para ver las próximas clases.</p>
+                </div>
+                <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Próxima entrega</p><h3 id="dashboardNextTask" class="font-bold mt-1 truncate max-w-[260px]">Nada pendiente</h3></div><i class="fa-solid fa-bell text-amber-500"></i></div>
+                    <p id="dashboardNextTaskMeta" class="text-xs text-slate-500 dark:text-slate-400">No tienes tareas próximas.</p>
+                </div>
+            </div>
+            <div id="dailyJokeCard" class="bg-white dark:bg-slate-800 rounded-3xl border border-amber-200 dark:border-slate-700 p-5 shadow-sm">
+                <div class="flex items-start gap-4">
+                    <div class="w-11 h-11 rounded-2xl bg-amber-50 dark:bg-amber-900/20 text-amber-500 flex items-center justify-center shrink-0 text-lg">
+                        <i class="fa-solid fa-face-laugh-beam"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-3">
+                            <p class="text-xs font-bold uppercase tracking-wider text-amber-500">Tu chiste del día</p>
+                        </div>
+                        <p id="dailyJokeText" class="font-semibold text-slate-800 dark:text-slate-100 mt-1 leading-relaxed break-words">Cargando chiste…</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <div id="sectionSchedule" class="space-y-6">
             <div class="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                 
@@ -1116,6 +1677,7 @@
                     </div>
                     
                     <div class="flex flex-wrap items-center gap-2">
+                        
                         <button onclick="openSlotModal()" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition flex items-center space-x-1.5">
                             <i class="fa-solid fa-clock-rotate-left text-blue-500"></i>
                             <span>Añadir Hora / Recreo</span>
@@ -1123,6 +1685,10 @@
                         <button id="editScheduleBtn" onclick="toggleEditScheduleMode()" class="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition flex items-center space-x-1.5">
                             <i id="editScheduleIcon" class="fa-solid fa-pen text-blue-500"></i>
                             <span id="editScheduleText">Editar Horario y Asignaciones</span>
+                        </button>
+<button onclick="openAddSubjectModal()" class="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm shadow-blue-500/20">
+                            <i class="fa-solid fa-book-medical"></i>
+                            <span>Añadir asignatura</span>
                         </button>
                     </div>
                 </div>
@@ -1354,7 +1920,7 @@
                     </div>
 
                     <div class="lg:col-span-4 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full">
-                        <div class="flex items-center justify-between mb-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
                             <h3 class="text-lg font-bold flex items-center space-x-2">
                                 <i class="fa-solid fa-list text-blue-500"></i>
                                 <span>Detalle de Faltas</span>
@@ -1391,6 +1957,18 @@
                 <div id="next7DaysContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <!-- Tarjetas de próximos 7 días -->
                 </div>
+            </div>
+
+            <div id="agendaEnrollmentPanel" class="hidden rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-4">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                    <div>
+                        <h3 class="font-bold text-sm text-slate-900 dark:text-white"><i class="fa-solid fa-book-open text-emerald-600 mr-2"></i>Mis asignaturas matriculadas</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Marca las asignaturas que cursas en esta clase. Tu agenda solo mostrará sus deberes y exámenes.</p>
+                    </div>
+                    <span id="agendaEnrollmentCount" class="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300"></span>
+                </div>
+                <div id="agendaEnrollmentList" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+                <p id="agendaEnrollmentEmpty" class="hidden text-xs text-slate-500 dark:text-slate-400">No hay asignaturas creadas en esta clase.</p>
             </div>
 
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2">
@@ -1483,7 +2061,120 @@
         </div>
     </div>
 
+    <!-- MODAL DE CLASES COMPARTIDAS -->
+    <div id="classManagerModal" class="fixed inset-0 z-[90] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-5">
+                <div>
+                    <h3 class="text-lg font-bold">Clases compartidas</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Comparte el horario, tareas y exámenes con otros usuarios.</p>
+                </div>
+                <button onclick="closeClassManager()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div id="currentClassPanel" class="hidden mb-5 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div>
+                        <p class="text-[10px] uppercase font-bold tracking-wider text-blue-500">Clase actual</p>
+                        <h4 id="currentClassName" class="font-bold text-slate-900 dark:text-white mt-1">—</h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Código: <strong id="currentClassCode" class="text-blue-600 dark:text-blue-400">—</strong></p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1"><span id="currentClassMembers">0</span> miembros</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <button onclick="openClassStudents()" class="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-50 transition"><i class="fa-solid fa-user-group mr-1"></i> Alumnos</button>
+                        <button onclick="openClassEnrollmentPanel()" class="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold hover:bg-blue-50 dark:hover:bg-blue-900/20 transition"><i class="fa-solid fa-book-open mr-1"></i> Matrículas</button>
+                        
+                        <button onclick="leaveCurrentClass()" class="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-800 text-rose-600 text-xs font-semibold hover:bg-rose-50 dark:hover:bg-rose-900/20 transition">Salir</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="classEnrollmentPanel" class="hidden mb-5 p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                <div class="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                        <h4 class="font-bold text-sm">Mis matrículas</h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Elige las asignaturas que cursas en esta clase. Solo recibirás los deberes y exámenes de las asignaturas marcadas.</p>
+                    </div>
+                    <button type="button" onclick="closeClassEnrollmentPanel()" class="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-slate-500 flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div id="classEnrollmentList" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+                <p id="classEnrollmentEmpty" class="hidden text-xs text-slate-500 dark:text-slate-400 mt-2">Todavía no hay asignaturas creadas en esta clase.</p>
+            </div>
+
+            <div id="joinedClassesPanel" class="mb-5 hidden">
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-bold text-sm">Mis clases</h4>
+                    <span id="joinedClassesCount" class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">0 clases</span>
+                </div>
+                <div id="joinedClassesList" class="space-y-2 max-h-56 overflow-y-auto pr-1 overscroll-contain"></div>
+            </div>
+
+            <div id="classActions" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <form onsubmit="createSharedClass(event)" class="p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3"><i class="fa-solid fa-plus"></i></div>
+                    <h4 class="font-bold">Crear clase</h4>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-3">Se generará un código para que otros usuarios puedan entrar.</p>
+                    <input id="newClassName" required maxlength="60" placeholder="Ej. 2º DAM - Mañana" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button class="w-full mt-3 px-3 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition">Crear clase</button>
+                </form>
+                <form onsubmit="joinSharedClass(event)" class="p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-3"><i class="fa-solid fa-right-to-bracket"></i></div>
+                    <h4 class="font-bold">Unirse a una clase</h4>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-3">Introduce el código que te haya dado el creador.</p>
+                    <input id="joinClassCode" required maxlength="8" placeholder="Ej. A7K2P9" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 uppercase text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button class="w-full mt-3 px-3 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition">Unirme</button>
+                </form>
+            </div>
+
+            <div class="mt-5 pt-4 border-t border-slate-100 dark:border-slate-700 flex justify-end items-center gap-3">
+                <button onclick="closeClassManager()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-700 transition">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE ALUMNOS DE LA CLASE -->
+    <div id="classStudentsModal" class="fixed inset-0 z-[95] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-5">
+                <div><h3 class="text-lg font-bold">Alumnos de la clase</h3><p id="classStudentsSubtitle" class="text-xs text-slate-500 dark:text-slate-400 mt-1"></p></div>
+                <button onclick="closeClassStudents()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="classStudentsList" class="space-y-2 max-h-80 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- BUZÓN DE SUGERENCIAS -->
+    <div id="suggestionsModal" class="fixed inset-0 z-[95] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-center justify-between mb-5">
+                <div>
+                    <h3 class="text-lg font-bold">Buzón de sugerencias</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Ayúdanos a mejorar Control de Faltas.</p>
+                </div>
+                <button onclick="closeSuggestionsModal()" class="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form onsubmit="submitSuggestion(event)">
+                <label class="block text-xs font-semibold mb-1">Tipo</label>
+                <select id="suggestionType" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm mb-4">
+                    <option>Idea</option><option>Mejora</option><option>Error</option><option>Otro</option>
+                </select>
+                <label class="block text-xs font-semibold mb-1">Tu sugerencia</label>
+                <textarea id="suggestionText" required maxlength="1000" rows="6" placeholder="Escribe aquí tu sugerencia..." class="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
+                <div class="mt-4 flex justify-end gap-2">
+                    <button type="button" onclick="closeSuggestionsModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-700 transition">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold transition"><i class="fa-solid fa-paper-plane mr-1"></i>Enviar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- MODAL DE AGENDA -->
+    <div id="classEnrollmentStatsModal" class="fixed inset-0 z-[96] bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4" onclick="if(event.target===this) closeClassEnrollmentStats()">
+        <div class="w-full max-w-lg bg-white dark:bg-slate-800 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div class="p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between"><div><h3 class="text-lg font-bold">Matrículas por asignatura</h3><p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Resumen de alumnos matriculados en cada materia.</p></div><button onclick="closeClassEnrollmentStats()" class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700"><i class="fa-solid fa-xmark"></i></button></div>
+            <div id="classEnrollmentStatsList" class="p-5 space-y-3 max-h-[65vh] overflow-y-auto"></div>
+        </div>
+    </div>
     <div id="agendaModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center justify-between mb-5">
@@ -1510,8 +2201,13 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Título / Descripción</label>
-                    <input type="text" id="agendaTitle" required placeholder="Ej. Tema 1 al 4 o Ejercicios pág 42" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Título</label>
+                    <input type="text" id="agendaTitle" required maxlength="160" placeholder="Ej. Examen tema 1 al 4" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Descripción</label>
+                    <textarea id="agendaDescription" maxlength="2000" rows="4" placeholder="Añade aquí todos los detalles..." class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
 
                 <div>
@@ -1639,6 +2335,32 @@
         </div>
     </div>
 
+
+    <!-- MODAL DE DETALLES DE AGENDA -->
+    <div id="agendaDetailsModal" class="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4" onclick="if(event.target===this) closeAgendaDetailsModal()">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div class="flex items-start justify-between gap-4 mb-5">
+                <div class="min-w-0">
+                    <span id="agendaDetailsType" class="inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"></span>
+                    <h3 id="agendaDetailsTitle" class="mt-3 text-xl font-bold text-slate-900 dark:text-white break-words"></h3>
+                </div>
+                <button onclick="closeAgendaDetailsModal()" class="shrink-0 w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-4 text-sm">
+                <div class="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Descripción</p>
+                    <p id="agendaDetailsDescription" class="agenda-detail-value text-slate-700 dark:text-slate-300"></p>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Asignatura</p><p id="agendaDetailsSubject" class="agenda-detail-value font-semibold text-slate-800 dark:text-slate-200"></p></div>
+                    <div class="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Fecha</p><p id="agendaDetailsDate" class="font-semibold text-slate-800 dark:text-slate-200"></p></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- MODAL PARA CAMBIAR CONTRASEÑA -->
     <div id="changePasswordModal" class="password-change-overlay" role="dialog" aria-modal="true" aria-labelledby="changePasswordTitle">
         <div class="password-change-modal">
@@ -1719,7 +2441,7 @@
     </div>
 
     <script>
-        let currentMainTab = 'schedule';
+        let currentMainTab = 'home';
         let currentAgendaFilter = 'all';
 
         function openLoginPrivacy() {
@@ -1766,6 +2488,7 @@
             updateRegisterPasswordStrength();
 
             if (login) login.classList.add('hidden');
+            if (window.syncModeBanners) window.syncModeBanners();
             if (register) {
                 register.classList.remove('hidden');
                 setTimeout(() => document.getElementById('registerUsername')?.focus(), 80);
@@ -1777,6 +2500,7 @@
             const register = document.getElementById('registerModal');
             if (register) register.classList.add('hidden');
             if (login) login.classList.remove('hidden');
+            if (window.syncModeBanners) window.syncModeBanners();
         }
 
         function openRecoveryModal() {
@@ -1998,10 +2722,86 @@
             if (recoveryModal && e.target === recoveryModal) closeRecoveryModal();
         });
 
+        function toggleHeaderToolsMenu() {
+            const menu = document.getElementById('headerToolsMenu');
+            const icon = document.getElementById('headerMenuIcon');
+            if (!menu) return;
+            const opening = menu.classList.contains('hidden');
+            menu.classList.toggle('hidden');
+            if (icon) icon.className = opening ? 'fa-solid fa-xmark text-slate-600 dark:text-slate-200' : 'fa-solid fa-bars text-slate-600 dark:text-slate-200';
+        }
+
+        function closeHeaderToolsMenu() {
+            const menu = document.getElementById('headerToolsMenu');
+            const icon = document.getElementById('headerMenuIcon');
+            if (menu) menu.classList.add('hidden');
+            if (icon) icon.className = 'fa-solid fa-bars text-slate-600 dark:text-slate-200';
+        }
+
+        document.addEventListener('click', function(e) {
+            const wrap = document.getElementById('headerToolsMenu')?.parentElement;
+            if (wrap && !wrap.contains(e.target)) closeHeaderToolsMenu();
+        });
+
         function toggleUserDropdown() {
             const menu = document.getElementById('userDropdownMenu');
             if (menu) menu.classList.toggle('hidden');
         }
+
+        async function openHeaderAccountMenu(accountButton) {
+            // Mantenemos abierto el menú principal y colocamos Cuenta debajo de su botón.
+            const buttonRect = accountButton?.getBoundingClientRect?.();
+            let menu = document.getElementById('headerAccountMenu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'headerAccountMenu';
+                menu.className = 'fixed bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 p-2 z-[300] w-56';
+                menu.innerHTML = `
+                    <div class="px-3 py-2 border-b border-slate-100 dark:border-slate-700 mb-1">
+                        <p class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sesión iniciada como</p>
+                        <p id="header-account-user" class="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate mt-0.5"></p>
+                    </div>
+                    <button onclick="openChangePasswordModal(); closeHeaderAccountMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
+                        <i class="fa-solid fa-key w-5 text-blue-500"></i><span>Cambiar contraseña</span>
+                    </button>
+                    <button onclick="logoutUser(); closeHeaderAccountMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition">
+                        <i class="fa-solid fa-right-from-bracket w-5"></i><span>Cerrar sesión</span>
+                    </button>`;
+                document.body.appendChild(menu);
+            }
+            const user = window.currentFirebaseUser;
+            const label = document.getElementById('header-account-user');
+            if (label) {
+                let displayName = user?.displayName || '';
+                try {
+                    if (user?.uid) {
+                        const snap = await get(ref(db, `users/${user.uid}/profile`));
+                        const profile = snap.exists() ? snap.val() : null;
+                        displayName = profile?.username || displayName;
+                    }
+                } catch (e) { console.warn('No se pudo obtener el nombre de usuario:', e); }
+                label.textContent = displayName || 'Usuario';
+            }
+
+            // Abrir el menú justo debajo del botón "Cuenta".
+            if (buttonRect) {
+                menu.style.top = `${buttonRect.bottom + 8}px`;
+                menu.style.left = `${Math.max(8, Math.min(buttonRect.left, window.innerWidth - 224))}px`;
+                menu.style.right = 'auto';
+            }
+            menu.classList.toggle('hidden');
+        }
+
+        function closeHeaderAccountMenu() {
+            const menu = document.getElementById('headerAccountMenu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('headerAccountMenu');
+            const accountButton = e.target.closest('#headerToolsMenu button');
+            if (menu && !menu.contains(e.target) && !accountButton) closeHeaderAccountMenu();
+        });
 
         window.addEventListener('keydown', function(e) {
             const modal = document.getElementById('loginPrivacyModal');
@@ -2013,7 +2813,8 @@
         window.addEventListener('click', function(e) {
             const userBar = document.getElementById('user-info-bar');
             const menu = document.getElementById('userDropdownMenu');
-            if (userBar && menu && !userBar.contains(e.target)) {
+            const toolsMenu = document.getElementById('headerToolsMenu');
+            if (userBar && menu && !userBar.contains(e.target) && !(toolsMenu && toolsMenu.contains(e.target))) {
                 menu.classList.add('hidden');
             }
         });
@@ -2069,6 +2870,42 @@
             return 0;
         }
 
+        function parseSlotEndTime(label) {
+            if (!label) return 0;
+            const match = String(label).match(/\d{1,2}:\d{2}\s*-\s*(\d{1,2}):(\d{2})/);
+            if (!match) return 0;
+            return parseInt(match[1], 10) + (parseInt(match[2], 10) / 60);
+        }
+
+        function isSubjectEnrolled(subject) {
+            return !subject || subject.enrolled !== false;
+        }
+
+        function getEnrolledSubjects() {
+            return (window.appData.subjects || []).filter(isSubjectEnrolled);
+        }
+
+        function toggleSubjectEnrollment(subjectId) {
+            const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
+            if (!subject) return;
+
+            const newValue = !isSubjectEnrolled(subject);
+            subject.enrolled = newValue;
+
+            if (window.activeDataMode === 'shared' && window.activeClassId && window.currentFirebaseUser) {
+                const excluded = new Set(window.classPersonalAttendance?.excludedSubjectIds || []);
+                if (newValue) excluded.delete(subjectId);
+                else excluded.add(subjectId);
+                window.classPersonalAttendance.excludedSubjectIds = Array.from(excluded);
+            }
+
+            saveToLocalStorage();
+            renderApp(false);
+            renderAgendaEnrollmentPanel();
+            renderClassEnrollmentPanel();
+            showToast(newValue ? `Ahora estás matriculado en ${subject.name}` : `Marcada como no matriculada: ${subject.name}`, newValue ? 'success' : 'info');
+        }
+
         function renderProximasClases() {
             const container = document.getElementById('contenedor-proximas');
             if (!container) return;
@@ -2076,38 +2913,52 @@
             const now = new Date();
             const currentDay = now.getDay();
             const currentHourDecimal = now.getHours() + (now.getMinutes() / 60);
-
             const activeSlots = (window.appData.timeSlots || []).filter(s => !s.isBreak);
             let proximas = [];
 
+            // Primero mostramos la clase que se está cursando ahora, si existe.
+            if (currentDay >= 1 && currentDay <= 5) {
+                const dayIndex = currentDay - 1;
+                for (const slot of activeSlots) {
+                    const startTime = parseSlotStartTime(slot.label);
+                    const endTime = parseSlotEndTime(slot.label);
+                    if (startTime <= currentHourDecimal && endTime > currentHourDecimal) {
+                        const key = `${dayIndex}_${slot.id}`;
+                        const subjectId = window.appData.schedule ? window.appData.schedule[key] : null;
+                        const subject = subjectId ? window.appData.subjects.find(s => s.id === subjectId) : null;
+                        if (subject && isSubjectEnrolled(subject)) {
+                            proximas.push({
+                                slotLabel: slot.label,
+                                subjectName: subject.name,
+                                dayName: 'Ahora',
+                                current: true
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Después añadimos las siguientes clases, sin contar la que está en curso.
             for (let offset = 0; offset < 7 && proximas.length < 3; offset++) {
                 let targetDay = (currentDay + offset) % 7;
-                
                 if (targetDay === 0 || targetDay === 6) continue;
-
                 let dayIndex = targetDay - 1;
 
                 activeSlots.forEach(slot => {
                     if (proximas.length >= 3) return;
-
                     const startTime = parseSlotStartTime(slot.label);
-
-                    if (offset === 0 && startTime <= currentHourDecimal) {
-                        return;
-                    }
-
+                    if (offset === 0 && startTime <= currentHourDecimal) return;
                     const key = `${dayIndex}_${slot.id}`;
                     const subjectId = window.appData.schedule ? window.appData.schedule[key] : null;
-
-                    let subjectName = 'Hora libre';
-                    if (subjectId) {
-                        const subject = window.appData.subjects.find(s => s.id === subjectId);
-                        if (subject) subjectName = subject.name;
-                    }
+                    if (!subjectId) return;
+                    const subject = window.appData.subjects.find(s => s.id === subjectId);
+                    if (!subject || !isSubjectEnrolled(subject)) return;
                     proximas.push({
                         slotLabel: slot.label,
-                        subjectName,
-                        dayName: offset === 0 ? 'Hoy' : (offset === 1 ? 'Mañana' : DAYS_NAMES[dayIndex])
+                        subjectName: subject.name,
+                        dayName: offset === 0 ? 'Hoy' : (offset === 1 ? 'Mañana' : DAYS_NAMES[dayIndex]),
+                        current: false
                     });
                 });
             }
@@ -2121,12 +2972,12 @@
             }
 
             container.innerHTML = proximas.slice(0, 3).map(item => `
-                <div class="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                <div class="p-4 rounded-2xl ${item.current ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'} border shadow-sm flex items-center justify-between">
                     <div>
-                        <span class="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 block">${escapeHtml(item.dayName)} • ${escapeHtml(item.slotLabel)}</span>
+                        <span class="text-[10px] uppercase font-bold ${item.current ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'} block">${escapeHtml(item.dayName)} • ${escapeHtml(item.slotLabel)}</span>
                         <h4 class="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5">${escapeHtml(item.subjectName)}</h4>
                     </div>
-                    <i class="fa-solid fa-clock text-slate-300 dark:text-slate-600 text-xl"></i>
+                    <i class="fa-solid ${item.current ? 'fa-chalkboard-user text-emerald-500' : 'fa-clock text-slate-300 dark:text-slate-600'} text-xl"></i>
                 </div>
             `).join('');
         }
@@ -2158,6 +3009,7 @@
                     window.appData = JSON.parse(savedData);
                     if (window.appData.globalLimit === undefined) window.appData.globalLimit = 15;
                     if (!window.appData.subjects) window.appData.subjects = [];
+                    window.appData.subjects = window.appData.subjects.map(s => ({ ...s, enrolled: s.enrolled !== false }));
                     if (!window.appData.schedule) window.appData.schedule = {};
                     if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
                     if (!window.appData.agendaTasks) window.appData.agendaTasks = [];
@@ -2182,6 +3034,9 @@
 
         window.saveToLocalStorage = function() {
             localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
+            if (window.activeDataMode !== 'shared') {
+                localStorage.setItem('attendance_private_app_data', JSON.stringify(window.appData));
+            }
             if (window.saveDataToCloud) {
                 window.saveDataToCloud(window.appData);
             }
@@ -2212,6 +3067,8 @@
 
         function switchMainTab(tab) {
             currentMainTab = tab;
+            const dashboard = document.getElementById('dashboardSection');
+            const btnDashboard = document.getElementById('tabBtnDashboard');
             const btnSchedule = document.getElementById('tabBtnSchedule');
             const btnFaltas = document.getElementById('tabBtnFaltas');
             const btnAgenda = document.getElementById('tabBtnAgenda');
@@ -2225,6 +3082,7 @@
             const activeClass = "px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-blue-600 text-white shadow-md shadow-blue-500/20 shrink-0";
             const inactiveClass = "px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0";
 
+            if (dashboard) dashboard.classList.add('hidden');
             secSchedule.classList.add('hidden');
             secFaltas.classList.add('hidden');
             secAgenda.classList.add('hidden');
@@ -2232,11 +3090,16 @@
             if (statsSummary) statsSummary.classList.add('hidden');
             if (proximasSection) proximasSection.classList.add('hidden');
 
+            if (btnDashboard) btnDashboard.className = inactiveClass;
             btnSchedule.className = inactiveClass;
             btnFaltas.className = inactiveClass;
             btnAgenda.className = inactiveClass;
 
-            if (tab === 'schedule') {
+            if (tab === 'home') {
+                if (dashboard) dashboard.classList.remove('hidden');
+                if (btnDashboard) btnDashboard.className = activeClass;
+                renderDashboard();
+            } else if (tab === 'schedule') {
                 secSchedule.classList.remove('hidden');
                 btnSchedule.className = activeClass;
                 if (proximasSection) {
@@ -2297,24 +3160,27 @@
             renderScheduleTable();
             renderSubjectsList();
             renderHistorySection();
+            renderAgendaEnrollmentPanel();
             renderAgendaList();
             
             if (isInitialLoad) {
-                switchMainTab('schedule');
+                // Cada entrada a la aplicación empieza siempre en Inicio.
+                currentMainTab = 'home';
+                switchMainTab('home');
             } else {
                 switchMainTab(currentMainTab);
             }
         };
 
         function renderStats() {
-            const totalSubjects = (window.appData.subjects || []).length;
+            const totalSubjects = getEnrolledSubjects().length;
             const statTotalSubjects = document.getElementById('statTotalSubjects');
             if (statTotalSubjects) statTotalSubjects.textContent = totalSubjects;
 
             let riskCount = 0;
             let totalAbsencesSum = 0;
 
-            (window.appData.subjects || []).forEach(sub => {
+            getEnrolledSubjects().forEach(sub => {
                 const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
                 const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
                 const remainingHours = maxAbsencesAllowed - (sub.absences || 0);
@@ -2540,13 +3406,17 @@
                                     </td>`;
                             }
                         } else {
-                            if (subject) {
-                                const colorIndex = window.appData.subjects.findIndex(s => s.id === subject.id) % SUBJECT_COLORS.length;
+                            // En una clase compartida, cada alumno solo ve en su horario
+                            // las asignaturas en las que está matriculado. Para él, una
+                            // franja de otra asignatura se convierte en "Hora libre".
+                            const visibleSubject = subject && isSubjectEnrolled(subject) ? subject : null;
+                            if (visibleSubject) {
+                                const colorIndex = window.appData.subjects.findIndex(s => s.id === visibleSubject.id) % SUBJECT_COLORS.length;
                                 const colorClass = SUBJECT_COLORS[colorIndex] || SUBJECT_COLORS[0];
                                 daysCellsHtmlMain += `
                                     <td class="p-2 text-center align-middle ${currentDayIdx === dayIdx ? 'bg-blue-100/60 dark:bg-blue-900/20 current-day-slot-cell' : ''} ${currentDayIdx === dayIdx && isCurrentSlot ? 'ring-2 ring-inset ring-blue-500' : ''}">
                                         <div class="w-full p-2.5 rounded-2xl border text-xs font-medium ${colorClass} flex flex-col items-center justify-center ${currentDayIdx === dayIdx && isCurrentSlot ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/20' : ''}">
-                                            <span class="font-bold truncate max-w-full">${escapeHtml(subject.name)}</span>
+                                            <span class="font-bold truncate max-w-full">${escapeHtml(visibleSubject.name)}</span>
                                         </div>
                                     </td>`;
                             } else {
@@ -2560,7 +3430,7 @@
                             }
                         }
 
-                        if (subject) {
+                        if (subject && isSubjectEnrolled(subject)) {
                             if (isAbsent) {
                                 daysCellsHtmlFaltas += `
                                     <td class="p-2 text-center align-middle">
@@ -2622,6 +3492,10 @@
 
             const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
             if (!subject) return;
+            if (!isSubjectEnrolled(subject)) {
+                showToast('No estás matriculado en esta asignatura', 'info');
+                return;
+            }
 
             if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
             const existingIndex = window.appData.absenceLogs.findIndex(log => log.date === dateKey && log.slotId === slotId);
@@ -2661,7 +3535,7 @@
                 if (!subjectId) return;
 
                 const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
-                if (!subject) return;
+                if (!subject || !isSubjectEnrolled(subject)) return;
 
                 if (!isAbsenceRecorded(dateKey, slot.id)) {
                     if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
@@ -2699,6 +3573,7 @@
         }
 
         function openAddSubjectModal() {
+            if (isSharedStudent()) { showToast('Solo el creador de la clase puede gestionar asignaturas', 'warning'); return; }
             document.getElementById('editSubjectId').value = '';
             document.getElementById('subjectName').value = '';
             document.getElementById('subjectTotalHours').value = 60;
@@ -2724,6 +3599,7 @@
         }
 
         function handleSubjectSubmit(e) {
+            if (isSharedStudent()) { e.preventDefault(); showToast('Solo el creador de la clase puede gestionar asignaturas', 'warning'); return; }
             e.preventDefault();
             const editId = document.getElementById('editSubjectId').value;
             const name = document.getElementById('subjectName').value.trim();
@@ -2732,6 +3608,19 @@
             const customLimit = customLimitVal !== '' ? parseFloat(customLimitVal) : null;
 
             if (!window.appData.subjects) window.appData.subjects = [];
+
+            // No permitir dos asignaturas con el mismo nombre (sin distinguir mayúsculas/minúsculas).
+            // Al editar, se excluye la propia asignatura para que pueda conservar su nombre.
+            const normalizedName = name.replace(/\s+/g, ' ').toLowerCase();
+            const duplicateSubject = window.appData.subjects.some(s => {
+                if (editId && s.id === editId) return false;
+                return String(s.name || '').replace(/\s+/g, ' ').trim().toLowerCase() === normalizedName;
+            });
+
+            if (duplicateSubject) {
+                showToast('Ya existe una asignatura con ese nombre', 'warning');
+                return;
+            }
 
             if (editId) {
                 const sub = window.appData.subjects.find(s => s.id === editId);
@@ -2747,7 +3636,8 @@
                     name,
                     totalHours,
                     absences: 0,
-                    customLimit
+                    customLimit,
+                    enrolled: true
                 };
                 window.appData.subjects.push(newSub);
                 showToast('Asignatura guardada');
@@ -2918,12 +3808,14 @@
             subjects.forEach((sub, idx) => {
                 const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
                 const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
-                const absences = sub.absences || 0;
+                const absences = isSubjectEnrolled(sub) ? (sub.absences || 0) : 0;
                 const remaining = maxAbsencesAllowed - absences;
                 const progressPct = Math.min(100, Math.max(0, (absences / maxAbsencesAllowed) * 100));
 
                 let statusBadge = '';
-                if (absences >= maxAbsencesAllowed) {
+                if (!isSubjectEnrolled(sub)) {
+                    statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">No matriculado</span>';
+                } else if (absences >= maxAbsencesAllowed) {
                     statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300">Límite Superado</span>';
                 } else if (remaining < 5) {
                     statusBadge = '<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">Riesgo Alto</span>';
@@ -2939,6 +3831,10 @@
                             <div>
                                 <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">Asignatura</span>
                                 <h3 class="font-bold text-lg text-slate-800 dark:text-slate-100 leading-snug">${escapeHtml(sub.name)}</h3>
+                                <button type="button" onclick="toggleSubjectEnrollment('${sub.id}')" class="mt-2 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold ${isSubjectEnrolled(sub) ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}">
+                                    <i class="fa-solid ${isSubjectEnrolled(sub) ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+                                    ${isSubjectEnrolled(sub) ? 'Estoy matriculado' : 'No estoy matriculado'}
+                                </button>
                             </div>
                             ${statusBadge}
                         </div>
@@ -2958,10 +3854,10 @@
 
                         <div class="pt-4 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
                             <div class="flex items-center space-x-1">
-                                <button onclick="adjustAbsence('${sub.id}', -1)" title="Restar falta manual" class="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 flex items-center justify-center transition text-xs font-bold">
+                                <button onclick="adjustAbsence('${sub.id}', -1)" title="Restar falta manual" ${!isSubjectEnrolled(sub) ? 'disabled' : ''} class="w-8 h-8 rounded-xl ${!isSubjectEnrolled(sub) ? 'opacity-40 cursor-not-allowed' : 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600'} text-slate-600 dark:text-slate-300 flex items-center justify-center transition text-xs font-bold">
                                     <i class="fa-solid fa-minus"></i>
                                 </button>
-                                <button onclick="adjustAbsence('${sub.id}', 1)" title="Añadir falta manual" class="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center transition text-xs font-bold">
+                                <button onclick="adjustAbsence('${sub.id}', 1)" title="Añadir falta manual" ${!isSubjectEnrolled(sub) ? 'disabled' : ''} class="w-8 h-8 rounded-xl ${!isSubjectEnrolled(sub) ? 'opacity-40 cursor-not-allowed' : 'bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50'} text-blue-600 dark:text-blue-400 flex items-center justify-center transition text-xs font-bold">
                                     <i class="fa-solid fa-plus"></i>
                                 </button>
                             </div>
@@ -2984,6 +3880,10 @@
         function adjustAbsence(subjectId, delta) {
             const sub = (window.appData.subjects || []).find(s => s.id === subjectId);
             if (!sub) return;
+            if (!isSubjectEnrolled(sub)) {
+                showToast('No estás matriculado en esta asignatura', 'info');
+                return;
+            }
 
             sub.absences = Math.max(0, (sub.absences || 0) + delta);
             saveToLocalStorage();
@@ -3044,7 +3944,7 @@
                         const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
                         const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
 
-                        if (isAbsent && subject) {
+                        if (isAbsent && subject && isSubjectEnrolled(subject)) {
                             rowHtml += `
                                 <td class="p-2 text-center align-middle">
                                     <div class="p-2 rounded-xl bg-rose-500 text-white text-[11px] font-bold shadow-sm">
@@ -3052,7 +3952,7 @@
                                         <span class="text-[9px] opacity-90 uppercase tracking-wider block mt-0.5">Falta</span>
                                     </div>
                                 </td>`;
-                        } else if (subject) {
+                        } else if (subject && isSubjectEnrolled(subject)) {
                             rowHtml += `
                                 <td class="p-2 text-center align-middle">
                                     <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 text-[11px] font-medium">
@@ -3076,7 +3976,10 @@
             if (!listContainer) return;
             listContainer.innerHTML = '';
 
-            const logs = window.appData.absenceLogs || [];
+            const logs = (window.appData.absenceLogs || []).filter(log => {
+                const subject = (window.appData.subjects || []).find(s => s.id === log.subjectId);
+                return !subject || isSubjectEnrolled(subject);
+            });
 
             if (logs.length === 0) {
                 listContainer.innerHTML = `
@@ -3124,16 +4027,17 @@
         }
 
         function openAgendaModal(id = null) {
+            if (isSharedStudent()) { showToast('Solo el creador de la clase puede gestionar tareas y exámenes comunes', 'warning'); return; }
             const subjectSelect = document.getElementById('agendaSubject');
             if (!subjectSelect) return;
 
             subjectSelect.innerHTML = '';
-            (window.appData.subjects || []).forEach(sub => {
+            getEnrolledSubjects().forEach(sub => {
                 subjectSelect.innerHTML += `<option value="${sub.id}">${escapeHtml(sub.name)}</option>`;
             });
 
-            if ((window.appData.subjects || []).length === 0) {
-                showToast('Primero añade al menos una asignatura', 'warning');
+            if (getEnrolledSubjects().length === 0) {
+                showToast('Primero marca al menos una asignatura como matriculada', 'warning');
                 return;
             }
 
@@ -3143,7 +4047,8 @@
                     document.getElementById('editAgendaId').value = task.id;
                     document.getElementById('agendaType').value = task.type;
                     document.getElementById('agendaSubject').value = task.subjectId;
-                    document.getElementById('agendaTitle').value = task.title;
+                    document.getElementById('agendaTitle').value = task.title || '';
+                    document.getElementById('agendaDescription').value = task.description || '';
                     document.getElementById('agendaDueDate').value = task.dueDate;
                     document.getElementById('agendaModalTitle').textContent = 'Editar Registro de Agenda';
                 }
@@ -3151,6 +4056,7 @@
                 document.getElementById('editAgendaId').value = '';
                 document.getElementById('agendaType').value = 'exam';
                 document.getElementById('agendaTitle').value = '';
+                document.getElementById('agendaDescription').value = '';
                 document.getElementById('agendaDueDate').value = formatDateKey(new Date());
                 document.getElementById('agendaModalTitle').textContent = 'Añadir a la Agenda';
             }
@@ -3168,10 +4074,23 @@
             const type = document.getElementById('agendaType').value;
             const subjectId = document.getElementById('agendaSubject').value;
             const title = document.getElementById('agendaTitle').value.trim();
+            const description = document.getElementById('agendaDescription').value.trim();
             const dueDate = document.getElementById('agendaDueDate').value;
 
             const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
-            const subjectName = subject ? subject.name : 'Asignatura';
+            if (!subject) {
+                showToast('Selecciona una asignatura válida', 'warning');
+                return;
+            }
+            const isSharedOwner = window.activeDataMode === 'shared'
+                && window.activeClassId
+                && window.currentFirebaseUser
+                && window.activeClassOwnerUid === window.currentFirebaseUser.uid;
+            if (!isSubjectEnrolled(subject) && !isSharedOwner) {
+                showToast('No estás matriculado en esta asignatura', 'warning');
+                return;
+            }
+            const subjectName = subject.name;
 
             if (!window.appData.agendaTasks) window.appData.agendaTasks = [];
 
@@ -3182,6 +4101,7 @@
                     task.subjectId = subjectId;
                     task.subjectName = subjectName;
                     task.title = title;
+                    task.description = description;
                     task.dueDate = dueDate;
                 }
                 showToast('Tarea/Examen actualizado');
@@ -3192,6 +4112,7 @@
                     subjectId,
                     subjectName,
                     title,
+                    description,
                     dueDate,
                     completed: false
                 });
@@ -3233,7 +4154,21 @@
             container.innerHTML = '';
             if (next7Container) next7Container.innerHTML = '';
 
-            const tasks = window.appData.agendaTasks || [];
+            const hiddenAgendaIds = new Set(window.classPersonalAttendance?.hiddenAgendaIds || []);
+            const deletedSharedAgendaIds = window.deletedSharedAgendaIds instanceof Set ? window.deletedSharedAgendaIds : new Set();
+            const isSharedAgenda = !!(window.activeClassId && window.activeDataMode === 'shared');
+            const tasks = (window.appData.agendaTasks || []).filter(task => {
+                if (hiddenAgendaIds.has(task.id) || deletedSharedAgendaIds.has(task.id)) return false;
+                // En una clase compartida, cada alumno solo ve los deberes/exámenes
+                // de las asignaturas en las que está matriculado.
+                // La matrícula es personal: no depende de la matrícula de otros alumnos.
+                if (isSharedAgenda) {
+                    const subject = (window.appData.subjects || []).find(s => s.id === task.subjectId);
+                    if (!subject) return false;
+                    return isSubjectEnrolled(subject);
+                }
+                return true;
+            });
 
             const today = new Date();
             today.setHours(0,0,0,0);
@@ -3271,7 +4206,7 @@
                                 </span>
                             </div>
                             <div>
-                                <h4 class="font-bold text-white text-sm line-clamp-1">${escapeHtml(t.title)}</h4>
+                                <h4 class="agenda-card-title font-bold text-white text-sm line-clamp-2">${escapeHtml(t.title)}</h4>
                                 <p class="text-xs text-blue-100 mt-0.5 font-medium">${escapeHtml(t.subjectName)}</p>
                             </div>
                         </div>
@@ -3301,8 +4236,8 @@
                 const isExam = task.type === 'exam';
 
                 const cardHtml = `
-                    <div class="bg-white dark:bg-slate-800 rounded-3xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between space-y-4 ${task.completed ? 'opacity-60' : ''}">
-                        <div class="space-y-3">
+                    <div id="agenda-card-${task.id}" onclick="toggleAgendaDetails('${task.id}')" class="agenda-card bg-white dark:bg-slate-800 rounded-3xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between space-y-4 ${task.completed ? 'opacity-60' : ''} cursor-pointer">
+                        <div class="space-y-3 min-w-0">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${isExam ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}">
                                     <i class="${isExam ? 'fa-solid fa-file-pen' : 'fa-solid fa-book'} mr-1"></i>
@@ -3313,25 +4248,39 @@
                                 </span>
                             </div>
 
-                            <div>
-                                <h3 class="font-bold text-base text-slate-800 dark:text-slate-100 ${task.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${escapeHtml(task.title)}</h3>
-                                <p class="text-xs text-blue-600 dark:text-blue-400 font-medium mt-0.5">${escapeHtml(task.subjectName)}</p>
+                            <div class="min-w-0">
+                                <h3 class="agenda-card-title font-bold text-base text-slate-800 dark:text-slate-100 ${task.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}">${escapeHtml(task.title)}</h3>
+                                <p class="text-xs text-blue-600 dark:text-blue-400 font-medium mt-0.5 break-words">${escapeHtml(task.subjectName)}</p>
+                                <div class="agenda-card-details mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60">
+                                    <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Descripción</p>
+                                    <p class="agenda-card-description text-sm text-slate-600 dark:text-slate-300">${escapeHtml(task.description || 'Sin descripción.')}</p>
+                                    <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-500 dark:text-slate-400">
+                                        <div><span class="font-bold">Tipo:</span> ${isExam ? 'Examen' : 'Deberes'}</div>
+                                        <div><span class="font-bold">Fecha:</span> ${formattedDate}</div>
+                                        <div><span class="font-bold">Asignatura:</span> ${escapeHtml(task.subjectName || '')}</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
                         <div class="pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                            <button onclick="toggleAgendaComplete('${task.id}')" class="flex items-center space-x-2 text-xs font-semibold ${task.completed ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'} transition">
+                            <button onclick="event.stopPropagation();toggleAgendaComplete('${task.id}')" class="flex items-center space-x-2 text-xs font-semibold ${task.completed ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'} transition">
                                 <i class="${task.completed ? 'fa-solid fa-circle-check text-emerald-500 text-base' : 'fa-regular fa-circle text-base'}"></i>
                                 <span>${task.completed ? 'Completado' : 'Marcar como hecho'}</span>
                             </button>
 
                             <div class="flex items-center space-x-1">
-                                <button onclick="openAgendaModal('${task.id}')" class="p-2 text-slate-400 hover:text-blue-500 transition text-xs">
+                                ${task.completed && window.activeClassId && window.activeDataMode === 'shared' ? `<button onclick="event.stopPropagation();hideAgendaForMe('${task.id}')" class="p-2 text-slate-400 hover:text-amber-500 transition text-xs" title="Ocultar solo para mí">
+                                    <i class="fa-solid fa-eye-slash"></i>
+                                </button>` : ''}
+                                <button onclick="event.stopPropagation();openAgendaModal('${task.id}')" class="p-2 text-slate-400 hover:text-blue-500 transition text-xs">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button onclick="deleteAgendaTask('${task.id}')" class="p-2 text-slate-400 hover:text-rose-500 transition text-xs">
+                                ${(window.activeClassId && window.activeDataMode === 'shared' && window.currentFirebaseUser) ? `<button onclick="event.stopPropagation();deleteAgendaTask('${task.id}')" class="p-2 text-slate-400 hover:text-rose-500 transition text-xs" title="Eliminar para todos" aria-label="Eliminar para todos">
                                     <i class="fa-solid fa-trash"></i>
-                                </button>
+                                </button>` : (!window.activeClassId || window.activeDataMode !== 'shared') ? `<button onclick="event.stopPropagation();deleteAgendaTask('${task.id}')" class="p-2 text-slate-400 hover:text-rose-500 transition text-xs" title="Eliminar" aria-label="Eliminar">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>` : ''}
                             </div>
                         </div>
                     </div>
@@ -3340,22 +4289,109 @@
             });
         }
 
+        function toggleAgendaDetails(id) {
+            const task = (window.appData.agendaTasks || []).find(t => String(t.id) === String(id));
+            if (!task) return;
+            const modal = document.getElementById('agendaDetailsModal');
+            if (!modal) return;
+            const isExam = task.type === 'exam';
+            const typeEl = document.getElementById('agendaDetailsType');
+            typeEl.textContent = isExam ? 'Examen' : 'Deberes';
+            typeEl.className = `inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${isExam ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`;
+            document.getElementById('agendaDetailsTitle').textContent = task.title || 'Sin título';
+            document.getElementById('agendaDetailsDescription').textContent = task.description || 'Sin descripción.';
+            document.getElementById('agendaDetailsSubject').textContent = task.subjectName || 'Sin asignatura';
+            const dateParts = String(task.dueDate || '').split('-');
+            document.getElementById('agendaDetailsDate').textContent = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : (task.dueDate || 'Sin fecha');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeAgendaDetailsModal() {
+            const modal = document.getElementById('agendaDetailsModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
         function toggleAgendaComplete(id) {
             const task = (window.appData.agendaTasks || []).find(t => t.id === id);
             if (!task) return;
 
-            task.completed = !task.completed;
-            saveToLocalStorage();
+            const newCompleted = !task.completed;
+            task.completed = newCompleted;
+
+            if (window.activeClassId && window.activeDataMode === 'shared' && window.currentFirebaseUser) {
+                const ids = new Set(window.classPersonalAttendance?.completedAgendaIds || []);
+                if (newCompleted) ids.add(id);
+                else ids.delete(id);
+                window.classPersonalAttendance.completedAgendaIds = Array.from(ids);
+                localStorage.setItem(
+                    'attendance_shared_personal_' + window.activeClassId + '_' + window.currentFirebaseUser.uid,
+                    JSON.stringify(window.classPersonalAttendance)
+                );
+                window.saveClassPersonalAttendance(window.activeClassId, window.currentFirebaseUser.uid);
+            } else {
+                saveToLocalStorage();
+            }
+
             renderAgendaList();
-            showToast(task.completed ? 'Marcar como completado' : 'Marcado como pendiente', 'info');
+            showToast(newCompleted ? 'Marcado como completado' : 'Marcado como pendiente', 'info');
         }
 
-        function deleteAgendaTask(id) {
-            if (!confirm('¿Seguro que deseas borrar este registro de la agenda?')) return;
-            window.appData.agendaTasks = (window.appData.agendaTasks || []).filter(t => t.id !== id);
-            saveToLocalStorage();
+        function hideAgendaForMe(id) {
+            const task = (window.appData.agendaTasks || []).find(t => t.id === id);
+            if (!task) return;
+            if (!(window.activeClassId && window.activeDataMode === 'shared' && window.currentFirebaseUser)) return;
+
+            const hidden = new Set(window.classPersonalAttendance?.hiddenAgendaIds || []);
+            hidden.add(id);
+            window.classPersonalAttendance.hiddenAgendaIds = Array.from(hidden);
+
+            localStorage.setItem(
+                'attendance_shared_personal_' + window.activeClassId + '_' + window.currentFirebaseUser.uid,
+                JSON.stringify(window.classPersonalAttendance)
+            );
+            window.saveClassPersonalAttendance(window.activeClassId, window.currentFirebaseUser.uid);
             renderAgendaList();
-            showToast('Registro eliminado', 'info');
+            showToast('Tarea ocultada solo para ti', 'info');
+        }
+
+        async function deleteAgendaTask(id) {
+            const isShared = !!(window.activeClassId && window.activeDataMode === 'shared' && window.currentFirebaseUser);
+            const message = isShared
+                ? '¿Seguro que deseas eliminar este examen o deberes para TODOS los alumnos de la clase?'
+                : '¿Seguro que deseas borrar este registro de la agenda?';
+            if (!confirm(message)) return;
+
+            try {
+                if (isShared) {
+                    // La eliminación para todos se guarda en una ruta independiente.
+                    // Así cualquier miembro puede eliminar una tarea sin darle permisos
+                    // para modificar todo el appData compartido.
+                    await window.firebaseSet(
+                        window.firebaseRef(window.firebaseDb, 'classes/' + window.activeClassId + '/deletedAgendaTasks/' + id),
+                        true
+                    );
+                    window.deletedSharedAgendaIds.add(id);
+                    window.appData.agendaTasks = (window.appData.agendaTasks || []).filter(t => t.id !== id);
+                    window.classPersonalAttendance.completedAgendaIds = (window.classPersonalAttendance.completedAgendaIds || []).filter(taskId => taskId !== id);
+                    window.classPersonalAttendance.hiddenAgendaIds = (window.classPersonalAttendance.hiddenAgendaIds || []).filter(taskId => taskId !== id);
+                    localStorage.setItem(
+                        'attendance_shared_personal_' + window.activeClassId + '_' + window.currentFirebaseUser.uid,
+                        JSON.stringify(window.classPersonalAttendance)
+                    );
+                    await window.saveClassPersonalAttendance(window.activeClassId, window.currentFirebaseUser.uid);
+                } else {
+                    window.appData.agendaTasks = (window.appData.agendaTasks || []).filter(t => t.id !== id);
+                    saveToLocalStorage();
+                }
+                renderAgendaList();
+                showToast(isShared ? 'Examen/deberes eliminado para todos' : 'Registro eliminado', 'info');
+            } catch (error) {
+                console.error('Error al eliminar el examen/deber:', error);
+                showToast('No se ha podido eliminar para todos. Comprueba las reglas de Firebase.', 'danger');
+            }
         }
 
         function openSettingsModal() {
@@ -3377,7 +4413,994 @@
             renderApp(false);
             showToast('Límite global actualizado');
         }
+        // ===== MODO PRIVADO / CLASES COMPARTIDAS =====
+        window.activeClassId = null;
+        window.activeDataMode = null;
+        window.deletedSharedAgendaIds = new Set();
+        let classDbRef = null;
+
+        function stopDataListener() {
+            try {
+                if (userDbRef) window.firebaseOff(userDbRef);
+                if (classDbRef) window.firebaseOff(classDbRef);
+            } catch (e) {}
+            userDbRef = null;
+            classDbRef = null;
+        }
+
+        function showModeSelection() {
+            stopDataListener();
+            window.activeClassId = null;
+            window.activeDataMode = null;
+            const mode = document.getElementById('mode-selection');
+            const main = document.getElementById('main-content');
+            const tabs = document.getElementById('main-tabs-nav');
+            const next = document.getElementById('proximas-clases-section');
+            if (mode) mode.classList.remove('hidden');
+            if (main) main.classList.add('hidden');
+            if (tabs) tabs.classList.add('hidden');
+            if (next) next.classList.add('hidden');
+            const classBtn = document.getElementById('classHeaderBtn');
+            const modeSwitcher = document.getElementById('dataModeSwitcher');
+            if (classBtn) classBtn.classList.add('hidden');
+            if (modeSwitcher) { modeSwitcher.classList.add('hidden'); modeSwitcher.classList.remove('flex'); }
+        }
+
+        function enterAppShell() {
+            const mode = document.getElementById('mode-selection');
+            const main = document.getElementById('main-content');
+            const tabs = document.getElementById('main-tabs-nav');
+            const next = document.getElementById('proximas-clases-section');
+            if (mode) mode.classList.add('hidden');
+            if (main) main.classList.remove('hidden');
+            if (tabs) tabs.classList.remove('hidden');
+            if (next) next.classList.remove('hidden');
+            const classBtn = document.getElementById('classHeaderBtn');
+            const modeSwitcher = document.getElementById('dataModeSwitcher');
+            if (classBtn) classBtn.classList.add('hidden');
+            if (modeSwitcher) {
+                modeSwitcher.classList.remove('hidden');
+                modeSwitcher.classList.add('flex');
+                updateModeSwitcherUI();
+            }
+            renderApp(true);
+            updateClassVisuals();
+        }
+
+        window.selectLocalMode = function() {
+            if (!window.currentFirebaseUser) return;
+            stopDataListener();
+            window.activeClassId = null;
+            window.activeDataMode = 'private';
+            localStorage.setItem('attendance_app_mode', 'private');
+            const privateCache = localStorage.getItem('attendance_private_app_data');
+            if (privateCache) {
+                try { window.appData = JSON.parse(privateCache); localStorage.setItem('attendance_app_hours_data', privateCache); } catch(e) {}
+            } else if (window.loadFromLocalStorage) {
+                window.loadFromLocalStorage();
+            }
+            enterAppShell();
+            updateModeSwitcherUI();
+            listenToCloudData(window.currentFirebaseUser.uid);
+            showToast('Modo privado activado', 'info');
+        }
+
+        function updateModeSwitcherUI() {
+            const localBtn = document.getElementById('modePrivateBtn');
+            const sharedBtn = document.getElementById('modeSharedBtn');
+            if (!localBtn || !sharedBtn) return;
+            const active = window.activeDataMode;
+            const activeClass = 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300';
+            const inactive = 'text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700';
+            localBtn.className = 'w-full px-3 py-2 rounded-lg text-xs font-bold text-left transition flex items-center gap-2 ' + (active === 'private' ? activeClass : inactive);
+            sharedBtn.className = 'w-full px-3 py-2 rounded-lg text-xs font-bold text-left transition flex items-center gap-2 ' + (active === 'shared' ? activeClass : inactive);
+            const icon = document.getElementById('dataModeIcon');
+            const button = document.getElementById('dataModeButton');
+            if (icon) icon.className = 'fa-solid ' + (active === 'shared' ? 'fa-users' : 'fa-user-lock') + ' text-white text-lg';
+            if (button) button.className = 'w-12 h-12 rounded-xl border shadow-lg flex items-center justify-center text-white transition ' + (active === 'shared' ? 'bg-blue-600 border-emerald-600 hover:bg-blue-700' : 'bg-blue-600 border-blue-600 hover:bg-blue-700');
+            updateClassVisuals();
+        }
+
+        function updateClassVisuals() {
+            const banner = document.getElementById('activeClassBanner');
+            const name = document.getElementById('activeClassBannerName');
+            if (!banner) return;
+            if (window.activeDataMode === 'shared') {
+                banner.classList.remove('hidden');
+                if (name) name.textContent = window.activeClassName || 'Clase compartida';
+            } else {
+                banner.classList.add('hidden');
+            }
+        }
+
+        function renderAgendaEnrollmentPanel() {
+            const panel = document.getElementById('agendaEnrollmentPanel');
+            const list = document.getElementById('agendaEnrollmentList');
+            const empty = document.getElementById('agendaEnrollmentEmpty');
+            const count = document.getElementById('agendaEnrollmentCount');
+            if (!panel || !list) return;
+
+            const isShared = window.activeDataMode === 'shared' && !!window.activeClassId;
+            if (!isShared) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            panel.classList.remove('hidden');
+            const subjects = window.appData?.subjects || [];
+            list.innerHTML = '';
+            if (!subjects.length) {
+                empty?.classList.remove('hidden');
+                if (count) count.textContent = '0 matriculadas';
+                return;
+            }
+            empty?.classList.add('hidden');
+
+            let enrolledCount = 0;
+            subjects.forEach(subject => {
+                const enrolled = isSubjectEnrolled(subject);
+                if (enrolled) enrolledCount++;
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-emerald-300 transition';
+                label.innerHTML = `
+                    <input type="checkbox" ${enrolled ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">${escapeHtml(subject.name)}</span>
+                        <span class="block text-[10px] mt-0.5 ${enrolled ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}">${enrolled ? 'Matriculado' : 'No matriculado'}</span>
+                    </span>`;
+                label.querySelector('input').addEventListener('change', e => {
+                    toggleSubjectEnrollment(subject.id);
+                });
+                list.appendChild(label);
+            });
+            if (count) count.textContent = `${enrolledCount} de ${subjects.length} matriculadas`;
+        }
+
+        function renderClassEnrollmentPanel() {
+            const panel = document.getElementById('classEnrollmentPanel');
+            const list = document.getElementById('classEnrollmentList');
+            const empty = document.getElementById('classEnrollmentEmpty');
+            if (!panel || !list) return;
+            if (window.activeDataMode !== 'shared' || !window.activeClassId) {
+                panel.classList.add('hidden');
+                return;
+            }
+            const subjects = window.appData?.subjects || [];
+            list.innerHTML = '';
+            if (!subjects.length) {
+                empty?.classList.remove('hidden');
+                return;
+            }
+            empty?.classList.add('hidden');
+            subjects.forEach((subject) => {
+                const enrolled = isSubjectEnrolled(subject);
+                const row = document.createElement('label');
+                row.className = 'flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-blue-300 transition';
+                row.innerHTML = `
+                    <input type="checkbox" ${enrolled ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">${escapeHtml(subject.name)}</span>
+                        <span class="block text-[10px] ${enrolled ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'} mt-0.5">${enrolled ? 'Matriculado' : 'No matriculado'}</span>
+                    </span>`;
+                row.querySelector('input').addEventListener('change', (e) => {
+                    const current = (window.appData.subjects || []).find(s => s.id === subject.id);
+                    if (!current) return;
+                    const excluded = new Set(window.classPersonalAttendance?.excludedSubjectIds || []);
+                    current.enrolled = e.target.checked;
+                    if (e.target.checked) excluded.delete(subject.id); else excluded.add(subject.id);
+                    window.classPersonalAttendance.excludedSubjectIds = Array.from(excluded);
+                    saveToLocalStorage();
+                    renderApp(false);
+                    renderClassEnrollmentPanel();
+                });
+                list.appendChild(row);
+            });
+        }
+
+        window.openClassEnrollmentPanel = function() {
+            const panel = document.getElementById('classEnrollmentPanel');
+            if (!panel) return;
+            panel.classList.remove('hidden');
+            renderClassEnrollmentPanel();
+        };
+
+        window.closeClassEnrollmentPanel = function() {
+            document.getElementById('classEnrollmentPanel')?.classList.add('hidden');
+        };
+
+        window.openClassStudents = async function() {
+            if (!window.activeClassId) return;
+            const modal = document.getElementById('classStudentsModal');
+            const list = document.getElementById('classStudentsList');
+            const subtitle = document.getElementById('classStudentsSubtitle');
+            if (!modal || !list) return;
+            modal.classList.remove('hidden');
+            list.innerHTML = '<div class="text-sm text-slate-500">Cargando alumnos...</div>';
+            try {
+                const snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classes/' + window.activeClassId + '/members'));
+                const members = snap.exists() ? snap.val() : {};
+                const entries = Object.entries(members);
+                if (subtitle) subtitle.textContent = (window.activeClassName || 'Clase') + ' · ' + entries.length + ' alumno' + (entries.length === 1 ? '' : 's');
+                list.innerHTML = entries.length ? entries.map(([uid, m]) => `
+                    <div class="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700">
+                        <div class="w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold"><i class="fa-solid fa-user"></i></div>
+                        <div class="min-w-0"><p class="font-semibold text-sm truncate">${escapeHtml(m?.name || 'Alumno')}</p>${uid === window.currentFirebaseUser?.uid ? '<span class="text-[10px] text-emerald-600">Tú</span>' : ''}</div>
+                    </div>`).join('') : '<div class="text-sm text-slate-500">No hay alumnos en esta clase.</div>';
+            } catch (e) {
+                console.error(e);
+                list.innerHTML = '<div class="text-sm text-rose-600">No se han podido cargar los alumnos.</div>';
+            }
+        };
+
+        window.closeClassStudents = function() {
+            document.getElementById('classStudentsModal')?.classList.add('hidden');
+        };
+
+        window.toggleDataModeMenu = function() {
+            const menu = document.getElementById('dataModeMenu');
+            if (menu) menu.classList.toggle('hidden');
+        };
+
+        window.closeDataModeMenu = function() {
+            const menu = document.getElementById('dataModeMenu');
+            if (menu) menu.classList.add('hidden');
+        };
+
+        document.addEventListener('click', function(e) {
+            const switcher = document.getElementById('dataModeSwitcher');
+            if (switcher && !switcher.contains(e.target)) closeDataModeMenu();
+        });
+
+                window.switchToPrivateMode = function() {
+            if (window.activeDataMode === 'private') return;
+            window.selectLocalMode();
+        };
+
+        window.switchToSharedMode = function() {
+            if (window.activeDataMode === 'shared') {
+                window.openClassManager();
+                return;
+            }
+            window.openClassManager();
+        };
+
+        window.openClassManager = async function() {
+            const modal = document.getElementById('classManagerModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            await updateClassManagerUI();
+        };
+
+        window.closeClassManager = function() {
+            const modal = document.getElementById('classManagerModal');
+            if (modal) modal.classList.add('hidden');
+        };
+
+        async function loadJoinedClasses() {
+            const panel = document.getElementById('joinedClassesPanel');
+            const list = document.getElementById('joinedClassesList');
+            const count = document.getElementById('joinedClassesCount');
+            const user = window.currentFirebaseUser;
+            if (!panel || !list || !count || !user) return;
+
+            try {
+                const snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'userGroups/' + user.uid + '/classes'));
+                const classes = snap.exists() ? (snap.val() || {}) : {};
+                const entries = Object.entries(classes);
+                panel.classList.remove('hidden');
+                count.textContent = entries.length + (entries.length === 1 ? ' clase' : ' clases');
+
+                if (!entries.length) {
+                    list.innerHTML = '<div class="p-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-xs text-slate-400">Todavía no estás unido a ninguna clase.</div>';
+                    return;
+                }
+
+                list.innerHTML = entries.map(([classId, info]) => {
+                    const isActive = classId === window.activeClassId;
+                    return `
+                        <button type="button" onclick="openJoinedClass('${classId}')" class="w-full text-left p-3 rounded-xl border ${isActive ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800'} hover:border-blue-400 transition flex items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="font-semibold text-sm truncate">${escapeHtml(info?.name || 'Clase sin nombre')}</div>
+                                <div class="text-[10px] text-slate-400 mt-0.5">Código: ${escapeHtml(info?.code || '—')}</div>
+                            </div>
+                            <i class="fa-solid ${isActive ? 'fa-circle-check text-blue-600' : 'fa-chevron-right text-slate-300'}"></i>
+                        </button>`;
+                }).join('');
+            } catch (error) {
+                console.error('Error cargando clases del usuario:', error);
+                panel.classList.remove('hidden');
+                list.innerHTML = '<div class="p-3 rounded-xl bg-rose-50 text-rose-600 text-xs">No se pudieron cargar tus clases.</div>';
+            }
+        }
+
+        window.openJoinedClass = async function(classId) {
+            const user = window.currentFirebaseUser;
+            if (!user || !classId) return;
+            try {
+                const snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classes/' + classId));
+                if (!snap.exists()) {
+                    showToast('Esta clase ya no existe.', 'warning');
+                    return;
+                }
+                const data = snap.val();
+                if (!(data.ownerUid === user.uid || (data.members && data.members[user.uid]))) {
+                    showToast('Ya no tienes acceso a esta clase.', 'warning');
+                    return;
+                }
+                await activateSharedClass(classId, data);
+                await loadJoinedClasses();
+            } catch (error) {
+                console.error(error);
+                showToast('No se pudo abrir la clase.', 'danger');
+            }
+        };
+
+        async function updateClassManagerUI() {
+            const panel = document.getElementById('currentClassPanel');
+            const actions = document.getElementById('classActions');
+            const name = document.getElementById('currentClassName');
+            const code = document.getElementById('currentClassCode');
+            const members = document.getElementById('currentClassMembers');
+            if (window.activeClassId) {
+                if (panel) panel.classList.remove('hidden');
+                if (name) name.textContent = window.activeClassName || 'Clase compartida';
+                if (code) code.textContent = window.activeClassCode || '—';
+                if (members) members.textContent = window.activeClassMembers || '—';
+            } else {
+                if (panel) panel.classList.add('hidden');
+                closeClassEnrollmentPanel();
+            }
+            // Las acciones siguen disponibles para crear otra clase o unirse a otra.
+            if (actions) actions.classList.remove('hidden');
+            await loadJoinedClasses();
+        }
+
+        function generateClassCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = '';
+            for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+            return code;
+        }
+
+        function getCurrentUserLabel() {
+            const u = window.currentFirebaseUser;
+            return document.getElementById('user-email-display')?.textContent || u?.displayName || 'Usuario';
+        }
+
+        window.createSharedClass = async function(e) {
+            e.preventDefault();
+            const user = window.currentFirebaseUser;
+            const name = document.getElementById('newClassName')?.value.trim();
+            if (!user || !name) return;
+
+            try {
+                // Generamos un código libre. Si classCodes está protegido, el error
+                // aparecerá de forma clara en consola en lugar de dejar una clase a medias.
+                let code = generateClassCode();
+                for (let i = 0; i < 8; i++) {
+                    const snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classCodes/' + code));
+                    if (!snap.exists()) break;
+                    code = generateClassCode();
+                }
+
+                const classRef = window.firebasePush(window.firebaseRef(window.firebaseDb, 'classes'));
+                const classId = classRef.key;
+                const label = getCurrentUserLabel();
+                const classData = {
+                    name,
+                    code,
+                    ownerUid: user.uid,
+                    ownerName: label,
+                    createdAt: Date.now(),
+                    members: { [user.uid]: { name: label, joinedAt: Date.now() } },
+                    appData: {
+                        globalLimit: 15,
+                        subjects: [],
+                        timeSlots: getDefaultTimeSlots(),
+                        schedule: {},
+                        absenceLogs: [],
+                        agendaTasks: []
+                    }
+                };
+
+                // Escritura atómica: se crean la clase y el código juntos.
+                const updates = {};
+                updates['/classes/' + classId] = classData;
+                updates['/classCodes/' + code] = { classId };
+                updates['/userGroups/' + user.uid + '/classes/' + classId] = { name, code, ownerUid: user.uid };
+                await window.firebaseUpdate(window.firebaseRef(window.firebaseDb), updates);
+
+                document.getElementById('newClassName').value = '';
+                await activateSharedClass(classId, classData);
+                showToast('Clase creada. Código: ' + code, 'success');
+            } catch (error) {
+                console.error('Error al crear clase en Firebase:', error);
+                const code = error?.code || '';
+                const message = error?.message || '';
+                if (code.includes('PERMISSION_DENIED') || message.toLowerCase().includes('permission denied')) {
+                    showToast('Firebase ha rechazado la creación. Revisa las reglas de Realtime Database.', 'danger');
+                } else {
+                    showToast('No se pudo crear la clase: ' + (message || 'error de Firebase'), 'danger');
+                }
+            }
+        }
+
+        window.joinSharedClass = async function(e) {
+            e.preventDefault();
+            const user = window.currentFirebaseUser;
+            const code = (document.getElementById('joinClassCode')?.value || '').trim().toUpperCase();
+            if (!user || !code) return;
+            try {
+                const codeSnap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classCodes/' + code));
+                if (!codeSnap.exists()) {
+                    showToast('No existe ninguna clase con ese código.', 'warning');
+                    return;
+                }
+                const classId = codeSnap.val().classId;
+                if (!classId) {
+                    showToast('El código de clase no es válido.', 'warning');
+                    return;
+                }
+
+                // Primero añadimos al usuario como miembro. Esto es importante porque
+                // las reglas de Firebase solo permiten leer los datos completos de una
+                // clase a sus miembros o al propietario.
+                await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'classes/' + classId + '/members/' + user.uid), {
+                    name: getCurrentUserLabel(), joinedAt: Date.now()
+                });
+
+                // Una vez que el usuario es miembro, ya puede leer la clase completa.
+                const classSnap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classes/' + classId));
+                if (!classSnap.exists()) {
+                    showToast('La clase ya no existe.', 'warning');
+                    return;
+                }
+                const data = classSnap.val();
+                await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'userGroups/' + user.uid + '/classes/' + classId), {
+                    name: data.name || 'Clase compartida', code: data.code || code, ownerUid: data.ownerUid || ''
+                });
+                document.getElementById('joinClassCode').value = '';
+                await activateSharedClass(classId, data);
+                showToast('Te has unido a ' + (data.name || 'la clase'), 'success');
+            } catch (error) {
+                console.error(error);
+                showToast('No se pudo unir a la clase. Comprueba las reglas de Firebase.', 'danger');
+            }
+        }
+
+        async function activateSharedClass(classId, classData) {
+            stopDataListener();
+            window.activeClassId = classId;
+            window.activeDataMode = 'shared';
+            window.activeClassName = classData?.name || 'Clase compartida';
+            window.activeClassCode = classData?.code || '';
+            window.activeClassMembers = Object.keys(classData?.members || {}).length || 1;
+            window.activeClassOwnerUid = classData?.ownerUid || null;
+            localStorage.setItem('attendance_app_mode', 'shared');
+            localStorage.setItem('attendance_active_class_id', classId);
+            const initial = classData?.appData || {
+                globalLimit: 15, subjects: [], timeSlots: getDefaultTimeSlots(), schedule: {}, absenceLogs: [], agendaTasks: []
+            };
+            // Las faltas de cada alumno se cargan aparte del horario compartido.
+            const cachedPersonal = localStorage.getItem('attendance_shared_personal_' + classId + '_' + window.currentFirebaseUser.uid);
+            if (cachedPersonal) {
+                try { window.classPersonalAttendance = JSON.parse(cachedPersonal) || { absenceLogs: [], excludedSubjectIds: [], completedAgendaIds: [] }; } catch(e) { window.classPersonalAttendance = { absenceLogs: [], excludedSubjectIds: [], completedAgendaIds: [], hiddenAgendaIds: [] }; }
+            }
+            await window.loadClassPersonalAttendance(classId, window.currentFirebaseUser.uid);
+            window.appData = window.applyClassPersonalAttendance(initial);
+            localStorage.setItem('attendance_shared_app_data_' + classId, JSON.stringify(window.appData));
+            enterAppShell();
+            updateClassVisuals();
+            window.deletedSharedAgendaIds = new Set();
+            const deletedAgendaRef = window.firebaseRef(window.firebaseDb, 'classes/' + classId + '/deletedAgendaTasks');
+            window.firebaseOnValue(deletedAgendaRef, (snapshot) => {
+                const deleted = snapshot.val() || {};
+                window.deletedSharedAgendaIds = new Set(Object.keys(deleted));
+                if (window.appData) {
+                    window.appData.agendaTasks = (window.appData.agendaTasks || []).filter(t => !window.deletedSharedAgendaIds.has(t.id));
+                }
+                if (window.renderApp) window.renderApp(false);
+            });
+
+            classDbRef = window.firebaseRef(window.firebaseDb, 'classes/' + classId + '/appData');
+            window.firebaseOnValue(classDbRef, (snapshot) => {
+                const data = snapshot.val();
+                if (!data) return;
+                isRemoteUpdate = true;
+                window.appData = window.applyClassPersonalAttendance(data);
+                if (!window.appData.timeSlots?.length) window.appData.timeSlots = getDefaultTimeSlots();
+                if (!window.appData.agendaTasks) window.appData.agendaTasks = [];
+                localStorage.setItem('attendance_shared_app_data_' + classId, JSON.stringify(window.appData));
+                if (window.renderApp) window.renderApp(false);
+                isRemoteUpdate = false;
+            });
+            window.firebaseGet(window.firebaseRef(window.firebaseDb, 'classes/' + classId + '/members')).then(s => {
+                window.activeClassMembers = s.exists() ? Object.keys(s.val() || {}).length : 1;
+                updateClassManagerUI();
+            });
+            closeClassManager();
+        }
+
+        window.leaveCurrentClass = async function() {
+            const user = window.currentFirebaseUser;
+            const classId = window.activeClassId;
+            if (!user || !classId) return;
+            if (!confirm('¿Quieres salir de esta clase? Tus datos personales no se borrarán.')) return;
+            try {
+                await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'classes/' + classId + '/members/' + user.uid), null);
+                await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'userGroups/' + user.uid + '/classes/' + classId), null);
+                stopDataListener();
+                window.activeClassId = null;
+                window.activeDataMode = null;
+                window.activeClassName = null;
+                window.activeClassCode = null;
+                window.activeClassMembers = 0;
+      window.activeClassOwnerUid = null;
+                updateClassVisuals();
+                closeClassManager();
+                showModeSelection();
+                showToast('Has salido de la clase.', 'info');
+            } catch (error) {
+                console.error(error);
+                showToast('No se pudo salir de la clase.', 'danger');
+            }
+        };
+
     </script>
+
+<script>
+(function(){
+  function ensurePrivateBanner(){
+    if(document.getElementById('privateModeBanner')) return;
+    var b=document.createElement('div'); b.id='privateModeBanner';
+    b.className='hidden px-4 py-1.5';
+    b.innerHTML='<div class="private-mode-inner w-full flex items-center justify-center gap-2 text-xs font-semibold"><i class="fa-solid fa-user-lock text-orange-600"></i><span>Modo privado</span></div>';
+    var h=document.querySelector('header'); if(h) h.insertAdjacentElement('afterend',b);
+  }
+  function syncPrivate(){
+    ensurePrivateBanner();
+    var b=document.getElementById('privateModeBanner');
+    var cb=document.getElementById('classModeBanner');
+    var authContainer=document.getElementById('auth-container');
+    var loginVisible=authContainer && !authContainer.classList.contains('hidden');
+    var shared=window.activeDataMode==='shared';
+    var privateMode=window.activeDataMode==='private';
+
+    // La barra de modo privado solo se muestra cuando el usuario ya ha iniciado sesión
+    // y está realmente dentro del modo privado. Nunca aparece en la pantalla de login.
+    if(b) b.classList.toggle('hidden', loginVisible || !privateMode);
+    if(cb) cb.classList.toggle('hidden', loginVisible || !shared);
+  }
+  window.syncModeBanners = syncPrivate;
+  document.addEventListener('DOMContentLoaded', function(){ensurePrivateBanner(); syncPrivate(); setTimeout(syncPrivate,300); setInterval(syncPrivate,500);});
+})();
+
+
+window.openSuggestionsModal = function(){
+  const m=document.getElementById('suggestionsModal');
+  if(m) m.classList.remove('hidden');
+};
+window.closeSuggestionsModal = function(){
+  const m=document.getElementById('suggestionsModal');
+  if(m) m.classList.add('hidden');
+};
+window.submitSuggestion = async function(e){
+  e.preventDefault();
+  const user=window.currentFirebaseUser;
+  const text=(document.getElementById('suggestionText')?.value||'').trim();
+  const type=document.getElementById('suggestionType')?.value||'Otro';
+  if(!user || !text) { showToast('Inicia sesión para enviar una sugerencia.','warning'); return; }
+  try {
+    const suggestionRef=window.firebasePush(window.firebaseRef(window.firebaseDb,'suggestions'));
+    await window.firebaseSet(suggestionRef,{
+      type, text, uid:user.uid, username:getCurrentUserLabel(), createdAt:Date.now(), mode:window.activeDataMode||'private', classId:window.activeClassId||null
+    });
+    document.getElementById('suggestionText').value='';
+    closeSuggestionsModal();
+    showToast('Sugerencia enviada. ¡Gracias!','success');
+  } catch(err) {
+    console.error(err);
+    showToast('No se pudo enviar la sugerencia. Revisa las reglas de Firebase.','danger');
+  }
+};
+</script>
+
+<script id="final-upgrade-functions">
+function isSharedOwner(){ return !!(window.activeDataMode==='shared' && window.activeClassId && window.currentFirebaseUser && window.activeClassOwnerUid===window.currentFirebaseUser.uid); }
+function isSharedStudent(){ return window.activeDataMode==='shared' && !!window.activeClassId && !isSharedOwner(); }
+function updateMobileThemeIcon(){ const i=document.getElementById('mobileThemeIcon'); if(i) i.className='fa-solid '+(document.documentElement.classList.contains('dark')?'fa-sun':'fa-moon')+' text-base'; }
+function updateMobileNav(){ ['home','schedule','agenda','faltas'].forEach(t=>{const b=document.getElementById('mobileNav'+t.charAt(0).toUpperCase()+t.slice(1)); if(b)b.classList.toggle('active',t==='home' ? false : currentMainTab===t);}); updateMobileThemeIcon(); }
+function handleMobileClassButton(event){
+  // El botón Clase de la barra inferior reutiliza el mismo menú de cambio de modo.
+  // Evitamos que el listener global de clic lo cierre inmediatamente.
+  if (event) event.stopPropagation();
+  const switcher = document.getElementById('dataModeSwitcher');
+  if (switcher) {
+    switcher.classList.remove('hidden');
+    switcher.classList.add('flex');
+  }
+  updateModeSwitcherUI();
+  toggleDataModeMenu();
+}
+function goToDashboard(){ switchMainTab('home'); const el=document.getElementById('dashboardSection'); if(el){ setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),0); } document.querySelectorAll('#mobileBottomNav button').forEach(b=>b.classList.remove('active')); document.getElementById('mobileNavHome')?.classList.add('active'); }
+
+function renderDailyJoke(){
+ const jokes=[
+  '—¿Qué hace una abeja en el gimnasio? —¡Zum-ba!',
+  '—¿Cuál es el colmo de un electricista? —Que su mujer se llame Luz y sus hijos le sigan la corriente.',
+  '—¿Qué le dice un semáforo a otro? —No me mires, que me estoy cambiando.',
+  '—¿Por qué el libro de matemáticas estaba triste? —Porque tenía demasiados problemas.',
+  '—¿Qué hace una vaca con los ojos cerrados? —Leche concentrada.',
+  '—¿Cómo se despiden los químicos? —Ácido un placer.',
+  '—¿Qué le dice una pared a otra? —Nos vemos en la esquina.',
+  '—¿Qué hace un pez? —¡Nada!',
+  '—¿Por qué el ordenador fue al médico? —Porque tenía un virus.',
+  '—¿Qué le dice un techo a otro? —Techo de menos.',
+  '—¿Qué hace una taza en el gimnasio? —¡Se pone en forma!',
+  '—¿Cuál es el animal más antiguo? —La cebra, porque está en blanco y negro.',
+  '—¿Qué le dice el 0 al 8? —Bonito cinturón.',
+  '—¿Por qué el lápiz estaba feliz? —Porque tenía una buena punta de vista.',
+  '—¿Qué hace una nube cuando tiene frío? —Se pone una tormenta.',
+  '—¿Qué le dice una impresora a otra? —¿Esa hoja es tuya o es impresión mía?',
+  '—¿Por qué el móvil fue al gimnasio? —Porque quería tener más cobertura.',
+  '—¿Qué hace un tomate en una carrera? —¡Kétchup!',
+  '—¿Qué le dijo una silla a otra? —Parece que hoy nos toca aguantar mucho.',
+  '—¿Por qué el calendario está tan contento? —Porque tiene todos los días contados.',
+  '—¿Qué le dice una iguana a su hermana gemela? —Somos iguanitas',
+
+'—¿Qué hace una abeja en el gimnasio? —Zum-ba',
+
+'—¿Cómo se dice pañuelo en japonés? —Sakamoko',
+
+'—¿Por qué los pájaros no usan Facebook? —Porque ya tienen Twitter',
+
+'—¿Qué le dice un pez a otro pez? —Nada',
+
+'—¿Qué hace un perro con un taladro? —Ta-drando',
+
+'—¿Cómo se llama el campeón de buceo japonés? —Tokoshondo',
+
+'—¿Y el subcampeón? —Kasitoko',
+
+'—¿Qué le dice un tallarín a otro? —¡Oye, mi cuerpo pide salsa!',
+
+'—¿Cómo se dice disparo en finlandés? —PUM',
+
+'—¿Qué le dice una cuchara a un cuchillo? —No seas cortante',
+
+'—¿Por qué las focas del circo miran siempre hacia arriba? —Porque es donde están los focos',
+
+'—¿Qué le dice un techo a otro? —Techo de menos',
+
+'—¿Cómo se dice despeñadero en indio? —Pumba',
+
+'—¿Qué hace una vaca con los ojos cerrados? —Producir leche concentrada',
+
+'—¿Qué le dice un jaguar a otro jaguar? —Jaguar you?',
+
+'—¿Cómo se dice náufrago en chino? —Chinchulancha',
+
+'—¿Qué le dice una pared a otra pared? —Nos vemos en la esquina',
+
+'—¿Cómo se llama el dentista japonés? —Tekura Otakuko',
+
+'—¿Qué hace un tomate en una esquina? —Esperar a la salsa',
+
+'—¿Qué le dice un fantasma a otro? —¿Crees en los humanos?',
+
+'—¿Cómo se dice café amargo en japonés? —Takara lasuka',
+
+'—¿Qué le dice un árbol a otro? —¡Qué pasa, tronco!',
+
+'—¿Cómo se dice ascensor en árabe? —En-al-Aha',
+
+'—¿Qué le dice un semáforo a otro? —No me mires, que me estoy cambiando',
+
+'—¿Cómo se dice frío en ruso? —Raska que te cagas',
+
+'—¿Por qué los peces no pagan peaje? —Porque van por la corriente',
+
+'—¿Qué le dice una chinche a otra chinche? —Te quiero chinchidamente',
+
+'—¿Qué le dice un cable a otro cable? —Somos intocables',
+
+'—¿Cómo se dice minifalda en portugués? —Casisi-ve',
+
+'—¿Qué le dice un cero a otro cero? —No somos nada',
+
+'—¿Cómo se dice lluvia en alemán? —Guten tag-ote',
+
+'—¿Qué hace un fantasma en un ascensor? —Subir el espíritu',
+
+'—¿Qué le dice una taza a otra taza? —¿Qué taz haciendo?',
+
+'—¿Qué le dice una impresora a otra? —¡Esa hoja es tuya o es impresión mía!',
+
+'—¿Por qué los esqueletos no pelean entre ellos? —Porque no tienen agallas',
+
+'—¿Qué le dice un gato a un perro? —Miau-chas gracias',
+
+'—¿Cómo se llama el rey de los quesos? —El queso-man',
+
+'—¿Qué le dice un pato a otro pato? —Estamos empatados',
+
+'—¿Cómo se dice autobús en alemán? —Empujen-estrujen-bajen',
+
+'—¿Qué hace un cocodrilo en una computadora? —Navegar por la red',
+
+'—¿Qué hace un zapato en la biblioteca? —Buscar su par',
+
+'—¿Cómo se dice pan quemado en francés? —Le chicharrón',
+
+'—¿Qué le dice una marea a la playa? —Nos vemos mañana',
+
+'—¿Qué le dice un reloj a otro? —Tienes la hora',
+
+'—¿Qué hace una papa bajo la tierra? —Pensar en el puré',
+
+'—¿Qué le dice un número 3 a un 30? —Para ser como yo tienes que ser un cero a la izquierda',
+
+'—¿Qué le dice una aguja a un hilo? —Te sigo a todas partes',
+
+'—¿Cómo se llama un pez sin ojos? —Pz',
+
+'—¿Qué le dice un gusano a otro? —Voy a dar una vuelta a la manzana',
+
+'—¿Por qué las plantas odian las matemáticas? —Porque les dan raíces cuadradas',
+
+'—¿Qué le dice una bombilla a otra? —Tanto tiempo juntas y aún no nos fundimos',
+
+'—¿Cómo se dice feo en chino? —Taik feo',
+
+'—¿Qué hace una cebolla en la calle? —Llorar por todo',
+
+'—¿Cómo se dice calvo en chino? —Chin pe lo',
+
+'—¿Qué le dice un volcán a otro? —Me pica la lava',
+
+'—¿Qué hace un mono en la cocina? —Monadas',
+
+'—¿Por qué los pájaros vuelan hacia el sur en invierno? —Porque caminando tardarían demasiado',
+
+'—¿Qué le dice un libro de matemáticas a uno de historia? —¡Tengo muchos problemas!',
+
+'—¿Cómo se dice divorcio en árabe? —Chao chao mi amor',
+
+'—¿Qué le dice una nube a otra nube? —Creo que nos vamos a llover',
+
+'—¿Qué hace un oso en el polo norte? —Tener frío',
+
+'—¿Qué le dice un botón a un ojal? —Te veo en la apertura',
+
+'—¿Qué le dice una tijera a un papel? —Te voy a cortar el rollo',
+
+'—¿Qué hace una escoba en un rincón? —Barrer el aire',
+
+'—¿Qué le dice un lápiz a un borrador? —Sin ti no soy nada',
+
+'—¿Qué le dice la sartén al aceite? —¡Sal de ahí que me quemo!',
+
+'—¿Por qué la luna es más grande que el sol? —Porque la dejan salir de noche',
+
+'—¿Qué le dice un melón a una sandía? —Somos de la misma familia',
+
+'—¿Qué hace una galleta en el hospital? —Está en coma',
+
+'—¿Qué le dice un pingüino a una pingüina? —Me gustas un polo',
+
+'—¿Qué le dice un lápiz a otro? —Estás muy punteado',
+
+'—¿Cómo se llama el pez más rápido del mar? —El pez-veloz',
+
+'—¿Qué hace una oveja al sol? —Lana tostada',
+
+'—¿Qué le dice un camaleón a otro? —No me cambies el tema',
+
+'—¿Cómo se dice abuela en chino? —Chinchilla',
+
+'—¿Qué le dice una vela a otra? —¡A ver si nos apagamos!',
+
+'—¿Qué le dice un imán a otro imán? —Me atraes mucho',
+
+'—¿Cómo se llama un perro mago? —El Labracadabrador',
+
+'—¿Qué hace una hamburguesa en el gimnasio? —Ponerse en forma',
+
+'—¿Qué le dice un plato a otro? —Mañana comemos juntos',
+
+'—¿Qué le dice una regadera a una flor? —¡Agua va!',
+
+'—¿Qué le dice una llave a un candado? —Ábrete de orejas',
+
+'—¿Cómo se dice secreto en chino? —Ni pa ti ni pa mi',
+
+'—¿Qué le dice un espejo a otro? —Reflejas mi estilo',
+
+'—¿Qué le dice un martillo a un clavo? —Te voy a dar en la cabeza',
+
+'—¿Qué le dice un globo a otro? —¡Cuidado con el cactus!',
+
+'—¿Qué hace una mosca en un vaso de leche? —Nadar de espaldas',
+
+'—¿Qué le dice una radio a otra? —Sintonízame',
+
+'—¿Qué le dice un tren a otro? —¡Voy sobre rieles!',
+
+'—¿Qué le dice un limón a una naranja? —¡Qué agrio eres!',
+
+'—¿Qué le dice una manzana a un plátano? —¡No te peles!',
+
+'—¿Qué le dice un semáforo a la calle? —No me mires que estoy rojo',
+
+'—¿Qué le dice una mesa a una silla? —Siéntate conmigo',
+
+'—¿Qué le dice un zapato a un calcetín? —Te llevo bien puesto',
+
+'—¿Qué le dice una ventana a la otra? —Déjame pasar la luz',
+
+'—¿Qué le dice un tenedor a una cuchara? —Eres muy profunda',
+
+'—¿Qué le dice un libro a un lector? —Léeme con atención',
+
+'—¿Qué le dice un barco a la orilla? —Nos vemos pronto',
+
+'—¿Qué le dice una rueda a otra? —Rodamos juntos',
+
+'—¿Qué le dice un lápiz al cuaderno? —Escribo en ti',
+
+'—¿Qué le dice un sombrero a la cabeza? —Te cubro bien',
+
+'—¿Qué le dice una pared al techo? —Sostienes todo',
+
+'—¿Qué le dice una alfombra al piso? —Te tengo cubierto',
+
+'—¿Qué le dice una taza al plato? —Hacemos buen equipo',
+
+'—¿Qué le dice el sol a la luna? —Nos vemos al atardecer',
+
+'—¿Qué le dice un árbol a la brisa? —Mueve mis hojas',
+
+'—¿Qué le dice la tierra a la lluvia? —Gracias por el agua',
+
+'—¿Qué le dice una nube al viento? —Soplame lejos',
+
+'—¿Qué le dice la puerta a la llave? —Gírame para abrir',
+
+'—¿Qué le dice un pez al anzuelo? —No me atraparás',
+
+'—¿Qué le dice una estrella al cielo? —Brillo para ti',
+
+'—¿Qué le dice un zapato al pie? —Te acompaño a caminar',
+
+'—¿Qué le dice una flor al sol? —Me haces crecer',
+
+'—¿Qué le dice el reloj al tiempo? —No te detengas',
+
+'—¿Qué le dice una carta al sobre? —Guárdame dentro',
+
+'—¿Qué le dice la nieve a la montaña? —Te voy a cubrir',
+
+'—¿Qué le dice un pincel a la pintura? —Vamos a dar color',
+
+'—¿Qué le dice una almohada a la cama? —Te acompaño en la noche',
+
+'—¿Qué le dice la luna a las estrellas? —Acompañen mi noche',
+
+'—¿Qué le dice un paraguas a la lluvia? —A mí no me mojas',
+
+'—¿Qué le dice una campana a otra? —¡Tan tan!',
+
+'—¿Qué le dice el puente al río? —Pasa por debajo',
+
+'—¿Qué le dice un tenedor al plato? —Estoy listo para comer',
+
+'—¿Qué le dice el viento a las hojas? —Vamos a volar',
+
+'—¿Qué le dice una linterna a la oscuridad? —Te voy a iluminar',
+
+'—¿Qué le dice el horizonte al cielo? —Nos unimos a lo lejos',
+
+'—¿Qué le dice una bufanda al cuello? —Te mantendré abrigado',
+
+'—¿Qué le dice la sombra al cuerpo? —Te sigo a donde vayas',
+
+'—¿Qué le dice una canción al oído? —Disfruta la melodía',
+
+'—¿Qué le dice la tierra a las semillas? —Florezcan pronto',
+
+'—¿Qué le dice el abrigo al invierno? —Estoy preparado',
+
+'—¿Qué le dice la mañana al día? —Empieza una nueva jornada',
+
+'—¿Qué le dice la brújula al viajero? —Te enseño el camino',
+
+'—¿Qué le dice la fogata a la noche? —Ilumino tus sombras',
+
+'—¿Qué le dice la corriente al río? —Sigamos fluyendo',
+
+'—¿Qué le dice la cima a la montaña? —Llegaste a lo más alto',
+
+'—¿Qué le dice el mar a la nave? —Te llevo en mis olas',
+
+'—¿Qué le dice el sol a las flores? —Abran sus pétalos',
+
+'—¿Qué le dice la lluvia a la tierra? —Te traigo frescura',
+
+'—¿Qué le dice el alba a la noche? —Es momento de dar paso a la luz',
+
+'—¿Qué le dice la brisa a la costa? —Llego desde el mar',
+
+'—¿Qué le dice el camino al caminante? —Sigue adelante',
+  
+  
+ ];
+ const el=document.getElementById('dailyJokeText'); if(!el)return;
+ const now=new Date();
+ const dayKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+ const user=window.currentFirebaseUser;
+ const username=(typeof getCurrentUserLabel==='function' ? getCurrentUserLabel() : '') || user?.displayName || user?.uid || 'usuario';
+ let hash=0; const seed=username+'|'+dayKey;
+ for(let i=0;i<seed.length;i++) hash=((hash<<5)-hash)+seed.charCodeAt(i)|0;
+ const index=Math.abs(hash)%jokes.length;
+ el.textContent=jokes[index];
+ el.dataset.joke=jokes[index];
+}
+
+async function shareDailyJoke(){
+ const text=document.getElementById('dailyJokeText')?.dataset.joke || document.getElementById('dailyJokeText')?.textContent || '';
+ if(!text)return;
+ const shareText='😂 Mi chiste de hoy:\n\n'+text;
+ try{
+   if(navigator.share){ await navigator.share({title:'Mi chiste del día',text:shareText}); return; }
+   if(navigator.clipboard){ await navigator.clipboard.writeText(shareText); showToast('Chiste copiado. ¡Compártelo con tus compañeros!','success'); return; }
+ }catch(e){ if(e && e.name==='AbortError') return; }
+ showToast('No se ha podido compartir el chiste.','warning');
+}
+
+function renderDashboard(){
+ const tasks=(window.appData.agendaTasks||[]).filter(t=>!t.completed && (!window.activeClassId || isSubjectEnrolled((window.appData.subjects||[]).find(s=>s.id===t.subjectId))));
+ const now=new Date(); const key=d=>{const x=new Date(d+'T23:59:59');return x;};
+ const upcoming=tasks.filter(t=>key(t.dueDate)>=now).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+ const next7=upcoming.filter(t=>(key(t.dueDate)-now)<=7*86400000);
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+ const name=(window.currentFirebaseUser?.displayName||document.getElementById('user-email-display')?.textContent||'Usuario').trim()||'Usuario';
+ renderDailyJoke();
+ set('dashboardGreeting','¡Hola, '+name+'!'); set('dashPendingCount',tasks.length); set('dashUpcomingCount',next7.length); set('dashSubjectsCount',(window.appData.subjects||[]).filter(isSubjectEnrolled).length); set('dashAbsencesCount',(window.appData.absenceLogs||[]).length);
+ if(upcoming[0]){set('dashboardNextTask',upcoming[0].title||'Sin título');set('dashboardNextTaskMeta',(upcoming[0].subjectName||'')+' · '+formatDashboardDate(upcoming[0].dueDate));}else{set('dashboardNextTask','Nada pendiente');set('dashboardNextTaskMeta','No tienes tareas próximas.');}
+ const slots=window.appData.timeSlots||[]; const today=new Date(); let next=null; for(let d=0;d<7&&!next;d++){let day=(today.getDay()+6+d)%7;if(day>4)continue; for(const slot of slots){const sid=window.appData.schedule?.[day+'_'+slot.id];const sub=(window.appData.subjects||[]).find(x=>x.id===sid);if(sub&&isSubjectEnrolled(sub)){next={sub,slot,day};break;}}} if(next){set('dashboardNextClass',next.sub.name);set('dashboardNextClassMeta',DAYS_NAMES[next.day]+' · '+next.slot.label);}else{set('dashboardNextClass','Sin clases próximas');set('dashboardNextClassMeta','No hay clases matriculadas próximas.');}
+}
+function formatDashboardDate(v){if(!v)return 'Sin fecha';const p=String(v).split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v;}
+async function openClassEnrollmentStats(){
+ if(!isSharedOwner()){showToast('Solo el creador puede ver este resumen','warning');return;}
+ const modal=document.getElementById('classEnrollmentStatsModal'), list=document.getElementById('classEnrollmentStatsList'); if(!modal||!list)return;
+ list.innerHTML='<div class="text-sm text-slate-500">Cargando matrículas…</div>'; modal.classList.remove('hidden');modal.classList.add('flex');
+ try{
+   const classSnap=await window.firebaseGet(window.firebaseRef(window.firebaseDb,'classes/'+window.activeClassId));
+   const data=classSnap.exists()?classSnap.val():{}; const members=data.members||{}; const subs=window.appData.subjects||[]; const ids=Object.keys(members);
+   const personal=await Promise.all(ids.map(uid=>window.firebaseGet(window.firebaseRef(window.firebaseDb,'classAttendance/'+window.activeClassId+'/'+uid)).then(x=>x.exists()?x.val():{}).catch(()=>({}))));
+   list.innerHTML=subs.length?subs.map(sub=>{let n=0;personal.forEach(m=>{const ex=m.excludedSubjectIds||[];if(!ex.includes(sub.id))n++;});const total=ids.length;const pct=total?Math.min(100,n/total*100):0;return `<div class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700"><div class="flex justify-between gap-3"><div class="font-bold">${escapeHtml(sub.name)}</div><div class="font-black text-blue-600">${n}/${total}</div></div><div class="mt-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"><div class="h-full bg-blue-600" style="width:${pct}%"></div></div></div>`}).join(''):'<p class="text-sm text-slate-500">No hay asignaturas.</p>';
+ }catch(e){console.error(e);list.innerHTML='<p class="text-sm text-rose-500">No se pudo cargar el resumen de matrículas.</p>';}
+}
+function closeClassEnrollmentStats(){const m=document.getElementById('classEnrollmentStatsModal');if(m){m.classList.add('hidden');m.classList.remove('flex');}}
+const _switchMainTabOriginal=switchMainTab;
+switchMainTab=function(tab){_switchMainTabOriginal(tab);updateMobileNav();if(tab==='schedule'||tab==='faltas'||tab==='agenda')renderDashboard();};
+const _renderAppOriginal=renderApp;
+renderApp=function(...args){const r=_renderAppOriginal(...args);setTimeout(()=>{renderDashboard();updateMobileNav();},0);return r;};
+const _toggleDarkModeOriginal=toggleDarkMode;
+toggleDarkMode=function(...args){const r=_toggleDarkModeOriginal(...args);setTimeout(updateMobileThemeIcon,0);return r;};
+</script>
+
+<script id="permission-ui">
+function updatePermissionUI(){
+ const student=isSharedStudent();
+ /* Los alumnos también pueden editar el horario compartido; la gestión de asignaturas sigue reservada al creador. */
+ document.querySelectorAll('#sectionSchedule button[onclick^="openAddSubjectModal"]').forEach(e=>e.classList.toggle('hidden',student));
+ const stats=document.getElementById('classEnrollmentStatsBtn');if(stats)stats.classList.toggle('hidden',!isSharedOwner());
+ const add=document.querySelector('#sectionAgenda button[onclick="openAgendaModal()"]');if(add)add.classList.toggle('hidden',student); document.querySelectorAll('#sectionAgenda button[onclick^="openAgendaModal"]').forEach(e=>{if(e.getAttribute('onclick')!=='openAgendaModal()') e.classList.toggle('hidden',student);}); /* Todos los miembros pueden eliminar tareas/exámenes compartidos. */
+ document.querySelectorAll('#sectionAgenda button[onclick^="deleteAgendaTask"]').forEach(e=>e.classList.remove('hidden'));
+}
+const _updateClassVisualsOriginal=updateClassVisuals; updateClassVisuals=function(...args){const r=_updateClassVisualsOriginal(...args);setTimeout(updatePermissionUI,0);return r;};
+</script>
 </body>
 
 </html>
