@@ -2175,7 +2175,7 @@
             <div id="classEnrollmentStatsList" class="p-5 space-y-3 max-h-[65vh] overflow-y-auto"></div>
         </div>
     </div>
-    <div id="agendaModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div id="agendaModal" class="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4 overflow-y-auto">
         <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
             <div class="flex items-center justify-between mb-5">
                 <h3 id="agendaModalTitle" class="text-lg font-bold">Añadir a la Agenda</h3>
@@ -2269,6 +2269,16 @@
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Nombre de la Asignatura</label>
                     <input type="text" id="subjectName" required placeholder="Ej. Matemáticas, Programación..." class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="rounded-2xl border border-blue-100 dark:border-blue-900/50 bg-blue-50/60 dark:bg-blue-900/10 p-3">
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" id="subjectBilingual" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block text-sm font-semibold">Asignatura bilingüe</span>
+                            <span class="block text-[11px] text-slate-500 dark:text-slate-400">Actívalo para diferenciar, por ejemplo, Historia bilingüe de Historia no bilingüe.</span>
+                        </span>
+                    </label>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -2906,6 +2916,23 @@
             showToast(newValue ? `Ahora estás matriculado en ${subject.name}` : `Marcada como no matriculada: ${subject.name}`, newValue ? 'success' : 'info');
         }
 
+        function getScheduledSubjectIds(cellKey) {
+            const value = window.appData.schedule ? window.appData.schedule[cellKey] : null;
+            if (!value) return [];
+            return Array.isArray(value) ? value.filter(Boolean).slice(0, 2) : [value];
+        }
+
+        function getScheduledSubjects(cellKey) {
+            return getScheduledSubjectIds(cellKey)
+                .map(id => (window.appData.subjects || []).find(s => s.id === id))
+                .filter(Boolean);
+        }
+
+        function subjectDisplayName(subject) {
+            if (!subject) return '';
+            return `${subject.name}${subject.bilingual ? ' · Bilingüe' : ''}`;
+        }
+
         function renderProximasClases() {
             const container = document.getElementById('contenedor-proximas');
             if (!container) return;
@@ -2913,73 +2940,106 @@
             const now = new Date();
             const currentDay = now.getDay();
             const currentHourDecimal = now.getHours() + (now.getMinutes() / 60);
-            const activeSlots = (window.appData.timeSlots || []).filter(s => !s.isBreak);
-            let proximas = [];
+            const timeSlots = window.appData.timeSlots || [];
+            const proximas = [];
 
-            // Primero mostramos la clase que se está cursando ahora, si existe.
+            function getSlotInfo(dayIndex, slot) {
+                if (slot.isBreak) {
+                    return { type: 'break', name: 'Recreo', dayIndex, slotLabel: slot.label };
+                }
+
+                const key = `${dayIndex}_${slot.id}`;
+                const subjects = getScheduledSubjects(key).filter(isSubjectEnrolled);
+                return {
+                    type: subjects.length ? 'class' : 'free',
+                    name: subjects.length ? subjects.map(subjectDisplayName).join(' / ') : 'Hora libre',
+                    dayIndex,
+                    slotLabel: slot.label
+                };
+            }
+
+            // Mostrar lo que está ocurriendo ahora, incluso si es recreo o una hora libre.
             if (currentDay >= 1 && currentDay <= 5) {
                 const dayIndex = currentDay - 1;
-                for (const slot of activeSlots) {
+                for (const slot of timeSlots) {
                     const startTime = parseSlotStartTime(slot.label);
                     const endTime = parseSlotEndTime(slot.label);
-                    if (startTime <= currentHourDecimal && endTime > currentHourDecimal) {
-                        const key = `${dayIndex}_${slot.id}`;
-                        const subjectId = window.appData.schedule ? window.appData.schedule[key] : null;
-                        const subject = subjectId ? window.appData.subjects.find(s => s.id === subjectId) : null;
-                        if (subject && isSubjectEnrolled(subject)) {
-                            proximas.push({
-                                slotLabel: slot.label,
-                                subjectName: subject.name,
-                                dayName: 'Ahora',
-                                current: true
-                            });
-                        }
+                    if (endTime > startTime && startTime <= currentHourDecimal && endTime > currentHourDecimal) {
+                        proximas.push({ ...getSlotInfo(dayIndex, slot), dayName: 'Ahora', current: true });
                         break;
                     }
                 }
             }
 
-            // Después añadimos las siguientes clases, sin contar la que está en curso.
+            // Mostrar las siguientes franjas, incluyendo horas libres y recreos.
             for (let offset = 0; offset < 7 && proximas.length < 3; offset++) {
-                let targetDay = (currentDay + offset) % 7;
+                const targetDay = (currentDay + offset) % 7;
                 if (targetDay === 0 || targetDay === 6) continue;
-                let dayIndex = targetDay - 1;
 
-                activeSlots.forEach(slot => {
-                    if (proximas.length >= 3) return;
+                const dayIndex = targetDay - 1;
+                const isToday = offset === 0;
+
+                for (const slot of timeSlots) {
+                    if (proximas.length >= 3) break;
                     const startTime = parseSlotStartTime(slot.label);
-                    if (offset === 0 && startTime <= currentHourDecimal) return;
-                    const key = `${dayIndex}_${slot.id}`;
-                    const subjectId = window.appData.schedule ? window.appData.schedule[key] : null;
-                    if (!subjectId) return;
-                    const subject = window.appData.subjects.find(s => s.id === subjectId);
-                    if (!subject || !isSubjectEnrolled(subject)) return;
+                    const endTime = parseSlotEndTime(slot.label);
+                    if (endTime <= startTime) continue;
+                    if (isToday && startTime <= currentHourDecimal) continue;
+
+                    const info = getSlotInfo(dayIndex, slot);
                     proximas.push({
-                        slotLabel: slot.label,
-                        subjectName: subject.name,
-                        dayName: offset === 0 ? 'Hoy' : (offset === 1 ? 'Mañana' : DAYS_NAMES[dayIndex]),
+                        ...info,
+                        dayName: isToday ? 'Hoy' : (offset === 1 ? 'Mañana' : DAYS_NAMES[dayIndex]),
                         current: false
                     });
-                });
+                }
             }
 
             if (proximas.length === 0) {
                 container.innerHTML = `
                     <div class="col-span-full p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">
-                        No hay próximas clases programadas en tu horario.
+                        No hay próximas horas en tu horario.
                     </div>`;
                 return;
             }
 
-            container.innerHTML = proximas.slice(0, 3).map(item => `
-                <div class="p-4 rounded-2xl ${item.current ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'} border shadow-sm flex items-center justify-between">
-                    <div>
-                        <span class="text-[10px] uppercase font-bold ${item.current ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'} block">${escapeHtml(item.dayName)} • ${escapeHtml(item.slotLabel)}</span>
-                        <h4 class="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5">${escapeHtml(item.subjectName)}</h4>
+            container.innerHTML = proximas.slice(0, 3).map(item => {
+                const isBreak = item.type === 'break';
+                const isFree = item.type === 'free';
+                const cardClass = item.current
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700'
+                    : isBreak
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+                        : isFree
+                            ? 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700';
+                const labelClass = item.current
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : isBreak
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : isFree
+                            ? 'text-slate-500 dark:text-slate-400'
+                            : 'text-blue-600 dark:text-blue-400';
+                const iconClass = item.current
+                    ? (isBreak ? 'fa-mug-hot text-amber-500' : isFree ? 'fa-clock text-slate-400' : 'fa-chalkboard-user text-emerald-500')
+                    : (isBreak ? 'fa-mug-hot text-amber-500' : isFree ? 'fa-clock text-slate-400' : 'fa-clock text-slate-300 dark:text-slate-600');
+
+                return `
+                    <div class="p-4 rounded-2xl ${cardClass} border shadow-sm flex items-center justify-between">
+                        <div class="min-w-0">
+                            <span class="text-[10px] uppercase font-bold ${labelClass} block">
+                                ${escapeHtml(item.dayName)} • ${escapeHtml(item.slotLabel)}
+                            </span>
+                            <h4 class="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5 truncate">
+                                ${escapeHtml(item.name)}
+                            </h4>
+                            ${isBreak ? '<span class="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Descanso</span>' : ''}
+                            ${isFree ? '<span class="text-[10px] text-slate-400 dark:text-slate-500 font-medium">Sin asignatura</span>' : ''}
+                        </div>
+                        <i class="fa-solid ${iconClass} text-xl ml-3 shrink-0"></i>
                     </div>
-                    <i class="fa-solid ${item.current ? 'fa-chalkboard-user text-emerald-500' : 'fa-clock text-slate-300 dark:text-slate-600'} text-xl"></i>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
         function openInfoModal() {
@@ -3380,20 +3440,21 @@
 
                     for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
                         const cellKey = `${dayIdx}_${slot.id}`;
-                        const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
-                        const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
+                        const scheduledSubjects = getScheduledSubjects(cellKey);
+                        const enrolledScheduledSubjects = scheduledSubjects.filter(isSubjectEnrolled);
+                        const subject = enrolledScheduledSubjects[0] || scheduledSubjects[0] || null;
 
                         const targetDate = getDateOfWeekDay(dayIdx, currentWeekOffset);
                         const dateKey = formatDateKey(targetDate);
                         const isAbsent = isAbsenceRecorded(dateKey, slot.id);
 
                         if (isEditScheduleMode) {
-                            if (subject) {
+                            if (scheduledSubjects.length) {
                                 daysCellsHtmlMain += `
                                     <td class="p-2 text-center align-middle">
                                         <button onclick="openAssignSlotModal(${dayIdx}, '${slot.id}')" class="w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
-                                            <span class="font-bold truncate max-w-full">${escapeHtml(subject.name)}</span>
-                                            <span class="text-[10px] opacity-75"><i class="fa-solid fa-pen text-[9px] mr-1"></i>Cambiar</span>
+                                            ${scheduledSubjects.map(s => `<span class="font-bold truncate max-w-full">${escapeHtml(subjectDisplayName(s))}</span>`).join('')}
+                                            <span class="text-[10px] opacity-75"><i class="fa-solid fa-pen text-[9px] mr-1"></i>${scheduledSubjects.length === 2 ? '2 asignaturas · Cambiar' : 'Cambiar'}</span>
                                         </button>
                                     </td>`;
                             } else {
@@ -3409,14 +3470,14 @@
                             // En una clase compartida, cada alumno solo ve en su horario
                             // las asignaturas en las que está matriculado. Para él, una
                             // franja de otra asignatura se convierte en "Hora libre".
-                            const visibleSubject = subject && isSubjectEnrolled(subject) ? subject : null;
-                            if (visibleSubject) {
-                                const colorIndex = window.appData.subjects.findIndex(s => s.id === visibleSubject.id) % SUBJECT_COLORS.length;
+                            const visibleSubjects = scheduledSubjects.filter(isSubjectEnrolled);
+                            if (visibleSubjects.length) {
+                                const colorIndex = window.appData.subjects.findIndex(s => s.id === visibleSubjects[0].id) % SUBJECT_COLORS.length;
                                 const colorClass = SUBJECT_COLORS[colorIndex] || SUBJECT_COLORS[0];
                                 daysCellsHtmlMain += `
                                     <td class="p-2 text-center align-middle ${currentDayIdx === dayIdx ? 'bg-blue-100/60 dark:bg-blue-900/20 current-day-slot-cell' : ''} ${currentDayIdx === dayIdx && isCurrentSlot ? 'ring-2 ring-inset ring-blue-500' : ''}">
                                         <div class="w-full p-2.5 rounded-2xl border text-xs font-medium ${colorClass} flex flex-col items-center justify-center ${currentDayIdx === dayIdx && isCurrentSlot ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-500/20' : ''}">
-                                            <span class="font-bold truncate max-w-full">${escapeHtml(visibleSubject.name)}</span>
+                                            ${visibleSubjects.map(s => `<span class="font-bold truncate max-w-full">${escapeHtml(subjectDisplayName(s))}</span>`).join('')}
                                         </div>
                                     </td>`;
                             } else {
@@ -3430,7 +3491,7 @@
                             }
                         }
 
-                        if (subject && isSubjectEnrolled(subject)) {
+                        if (enrolledScheduledSubjects.length > 0) {
                             if (isAbsent) {
                                 daysCellsHtmlFaltas += `
                                     <td class="p-2 text-center align-middle">
@@ -3442,12 +3503,12 @@
                                         </button>
                                     </td>`;
                             } else {
-                                const colorIndex = window.appData.subjects.findIndex(s => s.id === subject.id) % SUBJECT_COLORS.length;
+                                const colorIndex = window.appData.subjects.findIndex(s => s.id === enrolledScheduledSubjects[0].id) % SUBJECT_COLORS.length;
                                 const colorClass = SUBJECT_COLORS[colorIndex] || SUBJECT_COLORS[0];
                                 daysCellsHtmlFaltas += `
                                     <td class="p-2 text-center align-middle">
                                         <button onclick="toggleAbsenceSlot(${dayIdx}, '${slot.id}')" class="w-full p-2.5 rounded-2xl border text-xs font-medium transition shadow-sm hover:scale-[1.02] flex flex-col items-center justify-center gap-1 ${colorClass}">
-                                            <span class="font-bold truncate max-w-full">${escapeHtml(subject.name)}</span>
+                                            <span class="font-bold truncate max-w-full">${escapeHtml(enrolledScheduledSubjects.map(subjectDisplayName).join(' / '))}</span>
                                             <span class="text-[10px] opacity-75"><i class="fa-solid fa-plus text-[9px] mr-1"></i>Marcar Falta</span>
                                         </button>
                                     </td>`;
@@ -3486,36 +3547,30 @@
             const targetDate = getDateOfWeekDay(dayIdx, currentWeekOffset);
             const dateKey = formatDateKey(targetDate);
             const cellKey = `${dayIdx}_${slotId}`;
-            const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
+            const subjects = getScheduledSubjects(cellKey).filter(isSubjectEnrolled);
+            if (!subjects.length) return;
+            const slot = (window.appData.timeSlots || []).find(s => s.id === slotId);
+            const alreadyAbsent = isAbsenceRecorded(dateKey, slotId);
 
-            if (!subjectId) return;
-
-            const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
-            if (!subject) return;
-            if (!isSubjectEnrolled(subject)) {
-                showToast('No estás matriculado en esta asignatura', 'info');
-                return;
-            }
-
-            if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
-            const existingIndex = window.appData.absenceLogs.findIndex(log => log.date === dateKey && log.slotId === slotId);
-
-            if (existingIndex >= 0) {
-                window.appData.absenceLogs.splice(existingIndex, 1);
-                subject.absences = Math.max(0, (subject.absences || 0) - 1);
-                showToast(`Falta eliminada de ${subject.name}`, 'info');
-            } else {
-                const slot = (window.appData.timeSlots || []).find(s => s.id === slotId);
-                window.appData.absenceLogs.push({
-                    id: Date.now().toString(),
-                    date: dateKey,
-                    slotId,
-                    slotLabel: slot ? slot.label : '',
-                    subjectId: subject.id,
-                    subjectName: subject.name
+            if (alreadyAbsent) {
+                const removed = (window.appData.absenceLogs || []).filter(log => log.date === dateKey && log.slotId === slotId);
+                window.appData.absenceLogs = (window.appData.absenceLogs || []).filter(log => !(log.date === dateKey && log.slotId === slotId));
+                removed.forEach(log => {
+                    const sub = (window.appData.subjects || []).find(s => s.id === log.subjectId);
+                    if (sub) sub.absences = Math.max(0, (sub.absences || 0) - 1);
                 });
-                subject.absences = (subject.absences || 0) + 1;
-                showToast(`Falta registrada en ${subject.name}`, 'warning');
+                showToast('Falta eliminada', 'info');
+            } else {
+                if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
+                subjects.forEach((subject, index) => {
+                    window.appData.absenceLogs.push({
+                        id: Date.now().toString() + Math.random().toString().slice(2, 6) + index,
+                        date: dateKey, slotId, slotLabel: slot ? slot.label : '',
+                        subjectId: subject.id, subjectName: subject.name
+                    });
+                    subject.absences = (subject.absences || 0) + 1;
+                });
+                showToast(`Falta registrada en ${subjects.map(subjectDisplayName).join(' / ')}`, 'warning');
             }
 
             saveToLocalStorage();
@@ -3531,24 +3586,23 @@
                 if (slot.isBreak) return;
 
                 const cellKey = `${dayIdx}_${slot.id}`;
-                const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
-                if (!subjectId) return;
-
-                const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
-                if (!subject || !isSubjectEnrolled(subject)) return;
+                const subjects = getScheduledSubjects(cellKey).filter(isSubjectEnrolled);
+                if (!subjects.length) return;
 
                 if (!isAbsenceRecorded(dateKey, slot.id)) {
                     if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
-                    window.appData.absenceLogs.push({
-                        id: Date.now().toString() + Math.random().toString().slice(2, 6),
-                        date: dateKey,
-                        slotId: slot.id,
-                        slotLabel: slot.label,
-                        subjectId: subject.id,
-                        subjectName: subject.name
+                    subjects.forEach((subject, index) => {
+                        window.appData.absenceLogs.push({
+                            id: Date.now().toString() + Math.random().toString().slice(2, 6) + index,
+                            date: dateKey,
+                            slotId: slot.id,
+                            slotLabel: slot.label,
+                            subjectId: subject.id,
+                            subjectName: subject.name
+                        });
+                        subject.absences = (subject.absences || 0) + 1;
+                        addedCount++;
                     });
-                    subject.absences = (subject.absences || 0) + 1;
-                    addedCount++;
                 }
             });
 
@@ -3578,6 +3632,7 @@
             document.getElementById('subjectName').value = '';
             document.getElementById('subjectTotalHours').value = 60;
             document.getElementById('subjectLimit').value = '';
+            document.getElementById('subjectBilingual').checked = false;
             document.getElementById('modalTitle').textContent = 'Añadir Nueva Asignatura';
             document.getElementById('subjectModal').classList.remove('hidden');
         }
@@ -3590,6 +3645,7 @@
             document.getElementById('subjectName').value = subject.name;
             document.getElementById('subjectTotalHours').value = subject.totalHours;
             document.getElementById('subjectLimit').value = subject.customLimit !== null && subject.customLimit !== undefined ? subject.customLimit : '';
+            document.getElementById('subjectBilingual').checked = subject.bilingual === true;
             document.getElementById('modalTitle').textContent = 'Editar Asignatura';
             document.getElementById('subjectModal').classList.remove('hidden');
         }
@@ -3606,15 +3662,16 @@
             const totalHours = parseInt(document.getElementById('subjectTotalHours').value, 10);
             const customLimitVal = document.getElementById('subjectLimit').value;
             const customLimit = customLimitVal !== '' ? parseFloat(customLimitVal) : null;
+            const bilingual = document.getElementById('subjectBilingual').checked;
 
             if (!window.appData.subjects) window.appData.subjects = [];
 
-            // No permitir dos asignaturas con el mismo nombre (sin distinguir mayúsculas/minúsculas).
-            // Al editar, se excluye la propia asignatura para que pueda conservar su nombre.
-            const normalizedName = name.replace(/\s+/g, ' ').toLowerCase();
+            // Permitir el mismo nombre si una versión es bilingüe y la otra no.
+            const normalizedName = name.replace(/\s+/g, ' ').trim().toLowerCase();
             const duplicateSubject = window.appData.subjects.some(s => {
                 if (editId && s.id === editId) return false;
-                return String(s.name || '').replace(/\s+/g, ' ').trim().toLowerCase() === normalizedName;
+                const sameName = String(s.name || '').replace(/\s+/g, ' ').trim().toLowerCase() === normalizedName;
+                return sameName && (s.bilingual === true) === bilingual;
             });
 
             if (duplicateSubject) {
@@ -3628,6 +3685,7 @@
                     sub.name = name;
                     sub.totalHours = totalHours;
                     sub.customLimit = customLimit;
+                    sub.bilingual = bilingual;
                 }
                 showToast('Asignatura actualizada');
             } else {
@@ -3637,6 +3695,7 @@
                     totalHours,
                     absences: 0,
                     customLimit,
+                    bilingual,
                     enrolled: true
                 };
                 window.appData.subjects.push(newSub);
@@ -3655,9 +3714,10 @@
             
             if (window.appData.schedule) {
                 Object.keys(window.appData.schedule).forEach(key => {
-                    if (window.appData.schedule[key] === id) {
-                        delete window.appData.schedule[key];
-                    }
+                    const ids = Array.isArray(window.appData.schedule[key]) ? window.appData.schedule[key] : [window.appData.schedule[key]];
+                    const filtered = ids.filter(x => x !== id);
+                    if (filtered.length === 0) delete window.appData.schedule[key];
+                    else window.appData.schedule[key] = filtered;
                 });
             }
 
@@ -3738,29 +3798,52 @@
             const listContainer = document.getElementById('assignSlotList');
             if (!listContainer) return;
 
+            const cellKey = `${dayIdx}_${slotId}`;
+            const selectedIds = new Set(getScheduledSubjectIds(cellKey));
             listContainer.innerHTML = '';
 
-            const cellKey = `${dayIdx}_${slotId}`;
-            const currentSubjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
+            const intro = document.createElement('div');
+            intro.className = 'p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 text-xs text-blue-700 dark:text-blue-300 mb-2';
+            intro.innerHTML = '<i class="fa-solid fa-circle-info mr-1"></i> Puedes seleccionar hasta <strong>2 asignaturas</strong> en la misma hora. Esto permite casos como Religión/Valores o grupos bilingües.';
+            listContainer.appendChild(intro);
 
-            let html = `
-                <button onclick="assignSubjectToCell(null)" class="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center justify-between transition text-xs font-medium">
-                    <span class="text-slate-500">Dejar hora libre (Sin asignatura)</span>
-                    ${!currentSubjectId ? '<i class="fa-solid fa-check text-blue-500"></i>' : ''}
-                </button>
-            `;
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center justify-between transition text-xs font-medium';
+            clearBtn.innerHTML = '<span class="text-slate-500">Dejar hora libre (Sin asignatura)</span>';
+            clearBtn.onclick = () => assignSubjectsToCell([]);
+            listContainer.appendChild(clearBtn);
 
             (window.appData.subjects || []).forEach(sub => {
-                const isSelected = sub.id === currentSubjectId;
-                html += `
-                    <button onclick="assignSubjectToCell('${sub.id}')" class="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 flex items-center justify-between transition text-xs font-semibold">
-                        <span class="text-slate-800 dark:text-slate-200">${escapeHtml(sub.name)}</span>
-                        ${isSelected ? '<i class="fa-solid fa-check text-blue-500"></i>' : ''}
-                    </button>
-                `;
+                const row = document.createElement('label');
+                row.className = 'w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 flex items-center gap-3 transition text-xs font-semibold cursor-pointer';
+                row.innerHTML = `
+                    <input type="checkbox" value="${sub.id}" class="assign-subject-checkbox w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" ${selectedIds.has(sub.id) ? 'checked' : ''}>
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-slate-800 dark:text-slate-200">${escapeHtml(sub.name)}</span>
+                        <span class="block text-[10px] mt-0.5 ${sub.bilingual ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}">${sub.bilingual ? 'Bilingüe' : 'No bilingüe'}</span>
+                    </span>`;
+                row.querySelector('input').addEventListener('change', (e) => {
+                    const checked = Array.from(listContainer.querySelectorAll('.assign-subject-checkbox:checked'));
+                    if (checked.length > 2) {
+                        e.target.checked = false;
+                        showToast('Solo puedes poner 2 asignaturas en una misma hora', 'warning');
+                    }
+                });
+                listContainer.appendChild(row);
             });
 
-            listContainer.innerHTML = html;
+            const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
+            saveBtn.className = 'w-full mt-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-md';
+            saveBtn.innerHTML = '<i class="fa-solid fa-check mr-2"></i>Guardar esta hora';
+            saveBtn.onclick = () => {
+                const ids = Array.from(listContainer.querySelectorAll('.assign-subject-checkbox:checked')).map(cb => cb.value).slice(0, 2);
+                assignSubjectsToCell(ids);
+            };
+            listContainer.appendChild(saveBtn);
+
+            document.getElementById('assignSlotSubhead').textContent = `Selecciona 1 o 2 asignaturas para ${((window.appData.timeSlots || []).find(s => s.id === slotId)?.label || 'esta hora')}.`;
             document.getElementById('assignSlotModal').classList.remove('hidden');
         }
 
@@ -3769,24 +3852,24 @@
             selectedCellForAssign = null;
         }
 
-        function assignSubjectToCell(subjectId) {
+        function assignSubjectsToCell(subjectIds) {
             if (!selectedCellForAssign) return;
             const { dayIdx, slotId } = selectedCellForAssign;
             const cellKey = `${dayIdx}_${slotId}`;
-
+            const ids = Array.from(new Set((subjectIds || []).filter(Boolean))).slice(0, 2);
             if (!window.appData.schedule) window.appData.schedule = {};
-
-            if (subjectId) {
-                window.appData.schedule[cellKey] = subjectId;
-            } else {
-                delete window.appData.schedule[cellKey];
-            }
-
+            if (ids.length) window.appData.schedule[cellKey] = ids;
+            else delete window.appData.schedule[cellKey];
             saveToLocalStorage();
             closeAssignSlotModal();
             renderScheduleTable();
             renderProximasClases();
-            showToast('Horario actualizado');
+            showToast(ids.length === 2 ? 'Se han asignado 2 asignaturas a esta hora' : 'Horario actualizado');
+        }
+
+        // Compatibilidad con versiones anteriores y botones antiguos.
+        function assignSubjectToCell(subjectId) {
+            assignSubjectsToCell(subjectId ? [subjectId] : []);
         }
 
         function renderSubjectsList() {
@@ -3831,6 +3914,7 @@
                             <div>
                                 <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">Asignatura</span>
                                 <h3 class="font-bold text-lg text-slate-800 dark:text-slate-100 leading-snug">${escapeHtml(sub.name)}</h3>
+                                <span class="inline-flex mt-1 px-2 py-0.5 rounded-full text-[9px] font-bold ${sub.bilingual ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}">${sub.bilingual ? 'BILINGÜE' : 'NO BILINGÜE'}</span>
                                 <button type="button" onclick="toggleSubjectEnrollment('${sub.id}')" class="mt-2 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold ${isSubjectEnrolled(sub) ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}">
                                     <i class="fa-solid ${isSubjectEnrolled(sub) ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
                                     ${isSubjectEnrolled(sub) ? 'Estoy matriculado' : 'No estoy matriculado'}
@@ -3941,22 +4025,22 @@
                         const isAbsent = isAbsenceRecorded(dateKey, slot.id);
 
                         const cellKey = `${dayIdx}_${slot.id}`;
-                        const subjectId = window.appData.schedule ? window.appData.schedule[cellKey] : null;
-                        const subject = (window.appData.subjects || []).find(s => s.id === subjectId);
+                        const scheduledSubjects = getScheduledSubjects(cellKey);
+                        const visibleSubjects = scheduledSubjects.filter(isSubjectEnrolled);
 
-                        if (isAbsent && subject && isSubjectEnrolled(subject)) {
+                        if (isAbsent && visibleSubjects.length) {
                             rowHtml += `
                                 <td class="p-2 text-center align-middle">
                                     <div class="p-2 rounded-xl bg-rose-500 text-white text-[11px] font-bold shadow-sm">
-                                        <span class="block truncate max-w-[90px] mx-auto">${escapeHtml(subject.name)}</span>
+                                        <span class="block truncate max-w-[90px] mx-auto">${escapeHtml(visibleSubjects.map(subjectDisplayName).join(' / '))}</span>
                                         <span class="text-[9px] opacity-90 uppercase tracking-wider block mt-0.5">Falta</span>
                                     </div>
                                 </td>`;
-                        } else if (subject && isSubjectEnrolled(subject)) {
+                        } else if (visibleSubjects.length) {
                             rowHtml += `
                                 <td class="p-2 text-center align-middle">
                                     <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 text-[11px] font-medium">
-                                        <span class="block truncate max-w-[90px] mx-auto opacity-60">${escapeHtml(subject.name)}</span>
+                                        <span class="block truncate max-w-[90px] mx-auto opacity-60">${escapeHtml(visibleSubjects.map(subjectDisplayName).join(' / '))}</span>
                                     </div>
                                 </td>`;
                         } else {
@@ -5367,7 +5451,7 @@ function renderDashboard(){
  renderDailyJoke();
  set('dashboardGreeting','¡Hola, '+name+'!'); set('dashPendingCount',tasks.length); set('dashUpcomingCount',next7.length); set('dashSubjectsCount',(window.appData.subjects||[]).filter(isSubjectEnrolled).length); set('dashAbsencesCount',(window.appData.absenceLogs||[]).length);
  if(upcoming[0]){set('dashboardNextTask',upcoming[0].title||'Sin título');set('dashboardNextTaskMeta',(upcoming[0].subjectName||'')+' · '+formatDashboardDate(upcoming[0].dueDate));}else{set('dashboardNextTask','Nada pendiente');set('dashboardNextTaskMeta','No tienes tareas próximas.');}
- const slots=window.appData.timeSlots||[]; const today=new Date(); let next=null; for(let d=0;d<7&&!next;d++){let day=(today.getDay()+6+d)%7;if(day>4)continue; for(const slot of slots){const sid=window.appData.schedule?.[day+'_'+slot.id];const sub=(window.appData.subjects||[]).find(x=>x.id===sid);if(sub&&isSubjectEnrolled(sub)){next={sub,slot,day};break;}}} if(next){set('dashboardNextClass',next.sub.name);set('dashboardNextClassMeta',DAYS_NAMES[next.day]+' · '+next.slot.label);}else{set('dashboardNextClass','Sin clases próximas');set('dashboardNextClassMeta','No hay clases matriculadas próximas.');}
+ const slots=window.appData.timeSlots||[]; const today=new Date(); let next=null; for(let d=0;d<7&&!next;d++){let day=(today.getDay()+6+d)%7;if(day>4)continue; for(const slot of slots){const subs=getScheduledSubjects(day+'_'+slot.id).filter(isSubjectEnrolled);if(subs.length){next={sub:subs[0],subs,slot,day};break;}}} if(next){set('dashboardNextClass',next.subs.map(subjectDisplayName).join(' / '));set('dashboardNextClassMeta',DAYS_NAMES[next.day]+' · '+next.slot.label);}else{set('dashboardNextClass','Sin clases próximas');set('dashboardNextClassMeta','No hay clases matriculadas próximas.');}
 }
 function formatDashboardDate(v){if(!v)return 'Sin fecha';const p=String(v).split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v;}
 async function openClassEnrollmentStats(){
