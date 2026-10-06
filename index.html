@@ -4550,22 +4550,71 @@
             updateClassVisuals();
         }
 
-        window.selectLocalMode = function() {
-            if (!window.currentFirebaseUser) return;
+        window.selectLocalMode = async function() {
+            const user = window.currentFirebaseUser;
+            if (!user) return;
+
             stopDataListener();
             window.activeClassId = null;
             window.activeDataMode = 'private';
             localStorage.setItem('attendance_app_mode', 'private');
-            const privateCache = localStorage.getItem('attendance_private_app_data');
-            if (privateCache) {
-                try { window.appData = JSON.parse(privateCache); localStorage.setItem('attendance_app_hours_data', privateCache); } catch(e) {}
-            } else if (window.loadFromLocalStorage) {
-                window.loadFromLocalStorage();
+
+            // En modo privado los datos pertenecen a la cuenta, no al dispositivo.
+            // Primero recuperamos Firebase. localStorage solo sirve como respaldo.
+            let loadedFromCloud = false;
+
+            try {
+                const cloudRef = window.firebaseRef(window.firebaseDb, 'users/' + user.uid + '/appData');
+                const cloudSnapshot = await window.firebaseGet(cloudRef);
+
+                if (cloudSnapshot.exists()) {
+                    window.appData = cloudSnapshot.val() || {};
+                    loadedFromCloud = true;
+
+                    if (!window.appData.timeSlots || window.appData.timeSlots.length === 0) {
+                        window.appData.timeSlots = getDefaultTimeSlots();
+                    }
+                    if (!window.appData.subjects) window.appData.subjects = [];
+                    if (!window.appData.schedule) window.appData.schedule = {};
+                    if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
+                    if (!window.appData.agendaTasks) window.appData.agendaTasks = [];
+                    if (window.appData.globalLimit === undefined) window.appData.globalLimit = 15;
+
+                    const serialized = JSON.stringify(window.appData);
+                    localStorage.setItem('attendance_app_hours_data', serialized);
+                    localStorage.setItem('attendance_private_app_data', serialized);
+                }
+            } catch (error) {
+                console.error('No se pudieron cargar los datos privados desde Firebase:', error);
             }
+
+            // Si Firebase todavía no tiene datos, recuperamos la copia local
+            // y la subimos a la cuenta para que quede disponible en otros dispositivos.
+            if (!loadedFromCloud) {
+                const privateCache = localStorage.getItem('attendance_private_app_data');
+
+                if (privateCache) {
+                    try {
+                        window.appData = JSON.parse(privateCache);
+                        localStorage.setItem('attendance_app_hours_data', privateCache);
+                    } catch (e) {
+                        console.error('Error cargando la copia local privada:', e);
+                    }
+                } else if (window.loadFromLocalStorage) {
+                    window.loadFromLocalStorage();
+                }
+
+                if (window.saveDataToCloud && window.appData) {
+                    await window.saveDataToCloud(window.appData);
+                }
+            }
+
             enterAppShell();
             updateModeSwitcherUI();
-            listenToCloudData(window.currentFirebaseUser.uid);
-            showToast('Modo privado activado', 'info');
+
+            // A partir de aquí mantenemos la sincronización en tiempo real.
+            listenToCloudData(user.uid);
+            showToast('Modo privado activado y sincronizado', 'success');
         }
 
         function updateModeSwitcherUI() {
