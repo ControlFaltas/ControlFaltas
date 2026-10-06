@@ -1,0 +1,35 @@
+name: Enviar recordatorios de agenda
+
+on:
+  schedule:
+    # Se ejecuta cada 15 minutos. El script decide si son las 08:00 o 18:00
+    # de Europe/Madrid y evita duplicados mediante Firebase.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FIREBASE_PROJECT_ID: control-faltas-26
+      FIREBASE_DATABASE_URL: https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app
+      APP_URL: https://TU-USUARIO.github.io/TU-REPOSITORIO/
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Descargar proyecto
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+
+      - name: Enviar recordatorios
+        run: npm run send-reminders
