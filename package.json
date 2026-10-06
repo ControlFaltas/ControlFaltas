@@ -1,11 +1,14 @@
 {
-  "name": "control-faltas-notifications",
+  "name": "control-faltas-notificaciones",
   "private": true,
   "type": "module",
-  "scripts": {
-    "send-reminders": "node scripts/send-reminders.mjs"
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "firebase-admin": "^13.6.0"
+    "firebase-admin": "^13.5.0"
+  },
+  "scripts": {
+    "send-reminders": "node scripts/send-reminders.mjs"
   }
 }

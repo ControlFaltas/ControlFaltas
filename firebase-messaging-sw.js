@@ -1,4 +1,6 @@
-/* Firebase Cloud Messaging Service Worker */
+/* Service Worker de Firebase Cloud Messaging.
+   Este archivo recibe las notificaciones cuando la PWA está en segundo plano.
+*/
 importScripts('https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.19.0/firebase-messaging-compat.js');
 
@@ -17,38 +19,39 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   const data = payload?.data || {};
-  const title = data.title || 'Control Faltas';
-  const body = data.body || 'Tienes un evento próximo.';
+  const notification = payload?.notification || {};
+  const title = data.title || notification.title || 'Control Faltas';
+  const body = data.body || notification.body || 'Tienes un evento próximo.';
   const url = data.url || './';
-  const notificationId = data.notificationId || ('notification-' + Date.now());
+  const tag = data.notificationId || `control-faltas-${Date.now()}`;
 
   self.registration.showNotification(title, {
     body,
     icon: './sinfondo.png',
     badge: './sinfondo.png',
-    tag: notificationId,
-    renotify: true,
+    tag,
     data: { url }
   });
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || './';
+  const targetUrl = new URL(event.notification.data?.url || './', self.location.origin).href;
 
-  event.waitUntil((async () => {
-    const absoluteUrl = new URL(targetUrl, self.registration.scope).href;
-    const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-
-    for (const client of clientsList) {
-      if ('focus' in client) {
-        try {
-          await client.navigate(absoluteUrl);
-        } catch (_) {}
-        return client.focus();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          try {
+            const current = new URL(client.url);
+            if (current.origin === self.location.origin) {
+              if ('navigate' in client) client.navigate(targetUrl);
+              return client.focus();
+            }
+          } catch (_) {}
+        }
       }
-    }
-
-    if (clients.openWindow) return clients.openWindow(absoluteUrl);
-  })());
+      if (clients.openWindow) return clients.openWindow(targetUrl);
+    })
+  );
 });
