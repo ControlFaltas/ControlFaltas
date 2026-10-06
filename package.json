@@ -1,0 +1,11 @@
+{
+  "name": "control-faltas-notifications",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "send-reminders": "node scripts/send-reminders.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.6.0"
+  }
+}

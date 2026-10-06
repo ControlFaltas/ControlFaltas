@@ -34,6 +34,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="./notifications-config.js"></script>
     
     <style>
         body { font-family: 'Inter', sans-serif; }
@@ -391,6 +392,7 @@
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-messaging.js";
   import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
   import { 
     getAuth, 
@@ -433,6 +435,13 @@
   const analytics = getAnalytics(app);
   const auth = getAuth(app);
   const db = getDatabase(app);
+  let messaging = null;
+  let notificationServiceWorkerRegistration = null;
+  try {
+    if (await isSupported()) messaging = getMessaging(app);
+  } catch (messagingInitError) {
+    console.warn("Firebase Cloud Messaging no está disponible en este navegador:", messagingInitError);
+  }
   // Exponer Firebase al script principal (que no es type="module").
   window.firebaseDb = db;
   window.firebaseRef = ref;
@@ -501,6 +510,7 @@
       if (userEmailDisplay) userEmailDisplay.textContent = displayUsername || 'Usuario';
       if (proximasClasesSection) proximasClasesSection.classList.add('hidden');
       showModeSelection();
+      setTimeout(() => window.refreshNotificationUI?.(), 150);
     } else {
       if (userDbRef) {
         off(userDbRef);
@@ -519,6 +529,7 @@
       stopDataListener();
       window.activeClassId = null;
       window.activeDataMode = null;
+      setTimeout(() => window.refreshNotificationUI?.(), 100);
     }
   });
 
@@ -737,6 +748,50 @@
       console.error(error);
       if (window.showToast) window.showToast(getFriendlyAuthError(error, 'register'), 'danger');
     }
+  };
+
+  window.cambiarNombreUsuario = async (newUsername) => {
+    const user = window.currentFirebaseUser;
+    if (!user) throw new Error('No hay una sesión iniciada.');
+
+    newUsername = normalizeUsername(newUsername);
+
+    if (!newUsername || newUsername.includes('@') || !/^[a-zA-Z0-9._-]{3,30}$/.test(newUsername)) {
+      throw new Error('El nombre de usuario debe tener entre 3 y 30 caracteres y no puede contener @.');
+    }
+
+    const profileRef = ref(db, `users/${user.uid}/profile`);
+    const profileSnapshot = await get(profileRef);
+    const profile = profileSnapshot.exists() ? profileSnapshot.val() : {};
+    const oldUsername = normalizeUsername(profile.username || user.displayName || '');
+
+    if (!oldUsername) {
+      throw new Error('No se pudo determinar tu nombre de usuario actual.');
+    }
+
+    if (newUsername === oldUsername) {
+      return { changed: false, username: oldUsername };
+    }
+
+    const newUsernameRef = ref(db, `usernames/${newUsername}`);
+    const existingUsername = await get(newUsernameRef);
+    if (existingUsername.exists()) {
+      throw new Error('Ese nombre de usuario ya está registrado. Elige otro.');
+    }
+
+    const updates = {};
+    updates[`users/${user.uid}/profile/username`] = newUsername;
+    updates[`usernames/${newUsername}`] = {
+      email: user.email || profile.identifier || '',
+      uid: user.uid
+    };
+    // El índice antiguo deja de apuntar al usuario.
+    updates[`usernames/${oldUsername}`] = null;
+
+    await update(ref(db), updates);
+    await updateProfile(user, { displayName: newUsername });
+
+    return { changed: true, username: newUsername };
   };
 
   window.solicitarRestablecimiento = async (recoveryEmail) => {
@@ -1137,9 +1192,37 @@
     #proximas-clases-section{padding-bottom:24px !important}
     #mobileBottomNav{display:flex;position:fixed;left:10px;right:10px;bottom:10px;z-index:85;gap:6px;padding:7px;background:rgba(255,255,255,.94);backdrop-filter:blur(16px);border:1px solid rgba(226,232,240,.9);border-radius:20px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
     .dark #mobileBottomNav{background:rgba(15,23,42,.94);border-color:rgba(71,85,105,.7)}
-    #mobileBottomNav button{flex:1;min-width:0;padding:8px 5px;border-radius:14px;font-size:10px;font-weight:800;color:#64748b;display:flex;flex-direction:column;align-items:center;gap:3px;transition:.2s}
+    #mobileBottomNav button{
+      flex:1;
+      min-width:0;
+      width:100%;
+      height:54px !important;
+      min-height:54px !important;
+      max-height:54px !important;
+      box-sizing:border-box;
+      padding:7px 5px !important;
+      border-radius:14px;
+      font-size:10px;
+      font-weight:800;
+      line-height:1.1;
+      color:#64748b;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:3px;
+      transition:.2s;
+    }
     .dark #mobileBottomNav button{color:#94a3b8}
-    #mobileBottomNav button.active{background:#2563eb;color:white;box-shadow:0 5px 14px rgba(37,99,235,.25)}
+    #mobileBottomNav button.active{
+      height:54px !important;
+      min-height:54px !important;
+      max-height:54px !important;
+      padding:7px 5px !important;
+      background:#2563eb;
+      color:white;
+      box-shadow:0 5px 14px rgba(37,99,235,.25);
+    }
     /* En móvil el selector flotante se conserva solo para reutilizar su menú; se oculta su botón azul. */
     #dataModeSwitcher{bottom:92px !important;right:16px !important;z-index:100 !important}
     #dataModeButton{display:none !important}
@@ -1220,6 +1303,10 @@
                     <i class="fa-solid fa-user-xmark"></i>
                     <span>Faltas</span>
                 </button>
+                <button id="tabBtnAsignaturas" onclick="switchMainTab('asignaturas')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
+                    <i class="fa-solid fa-book-open"></i>
+                    <span>Asignaturas</span>
+                </button>
                 <button id="tabBtnAgenda" onclick="switchMainTab('agenda')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
                     <i class="fa-solid fa-book-bookmark"></i>
                     <span>Agenda</span>
@@ -1269,6 +1356,10 @@
                         <button onclick="openInfoModal(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition">
                             <i class="fa-solid fa-circle-info w-5 text-blue-500"></i><span>Información</span>
                         </button>
+                        <button onclick="openNotificationSettings(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition">
+                            <i class="fa-solid fa-bell w-5 text-emerald-500"></i><span>Notificaciones</span>
+                            <span id="notificationMenuStatus" class="ml-auto text-[10px] font-bold text-slate-400">Desactivadas</span>
+                        </button>
                         <button onclick="openSettingsModal(); closeHeaderToolsMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
                             <i class="fa-solid fa-gauge-high w-5 text-blue-500"></i><span>Configurar límite</span>
                             <span id="globalLimitBadge" class="ml-auto hidden bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">15%</span>
@@ -1297,11 +1388,12 @@
         <button id="mobileNavSchedule" onclick="switchMainTab('schedule')"><i class="fa-solid fa-calendar-days text-base"></i><span>Horario</span></button>
         <button id="mobileNavAgenda" onclick="switchMainTab('agenda')"><i class="fa-solid fa-book-bookmark text-base"></i><span>Agenda</span></button>
         <button id="mobileNavFaltas" onclick="switchMainTab('faltas')"><i class="fa-solid fa-user-xmark text-base"></i><span>Faltas</span></button>
+        <button id="mobileNavAsignaturas" onclick="switchMainTab('asignaturas')"><i class="fa-solid fa-book-open text-base"></i><span>Asignaturas</span></button>
         <button id="mobileNavClass" onclick="handleMobileClassButton(event)"><i class="fa-solid fa-users text-base"></i><span>Clase</span></button>
         <button onclick="toggleDarkMode()"><i id="mobileThemeIcon" class="fa-solid fa-moon text-base"></i><span>Modo</span></button>
     </nav>
     <!-- Selector Local / Clase: botón flotante abajo a la derecha -->
-    <div id="dataModeSwitcher" class="hidden fixed bottom-5 right-5 z-[80]">
+    <div id="dataModeSwitcher" class="hidden fixed bottom-5 right-5 z-[80] rounded-3xl">
         <button id="dataModeButton" type="button" onclick="toggleDataModeMenu()" aria-label="Cambiar entre Privado y Clase" class="w-12 h-12 rounded-xl bg-blue-600 border border-blue-600 shadow-lg flex items-center justify-center text-white hover:bg-blue-700 transition">
             <i id="dataModeIcon" class="fa-solid fa-user-lock text-white text-lg"></i>
         </button>
@@ -1634,14 +1726,18 @@
                     </button>
                 </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
                     <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Siguiente clase</p><h3 id="dashboardNextClass" class="font-bold mt-1">Sin clases próximas</h3></div><i class="fa-solid fa-arrow-right text-blue-500"></i></div>
                     <p id="dashboardNextClassMeta" class="text-xs text-slate-500 dark:text-slate-400">Consulta tu horario para ver las próximas clases.</p>
                 </div>
                 <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
-                    <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Próxima entrega</p><h3 id="dashboardNextTask" class="font-bold mt-1 truncate max-w-[260px]">Nada pendiente</h3></div><i class="fa-solid fa-bell text-amber-500"></i></div>
+                    <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Próxima tarea</p><h3 id="dashboardNextTask" class="font-bold mt-1 truncate max-w-[260px]">Nada pendiente</h3></div><i class="fa-solid fa-list-check text-amber-500"></i></div>
                     <p id="dashboardNextTaskMeta" class="text-xs text-slate-500 dark:text-slate-400">No tienes tareas próximas.</p>
+                </div>
+                <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="flex items-center justify-between mb-3"><div><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Próximo examen</p><h3 id="dashboardNextExam" class="font-bold mt-1 truncate max-w-[260px]">Nada pendiente</h3></div><i class="fa-solid fa-file-pen text-rose-500"></i></div>
+                    <p id="dashboardNextExamMeta" class="text-xs text-slate-500 dark:text-slate-400">No tienes exámenes próximos.</p>
                 </div>
             </div>
             <div id="dailyJokeCard" class="bg-white dark:bg-slate-800 rounded-3xl border border-amber-200 dark:border-slate-700 p-5 shadow-sm">
@@ -1937,6 +2033,81 @@
 
         </div>
 
+        <!-- SECCIÓN DE ASIGNATURAS -->
+        <div id="sectionAsignaturas" class="hidden space-y-6">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h2 class="text-2xl font-extrabold tracking-tight">Mis Asignaturas</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                        Crea tus asignaturas y elige en cuáles estás matriculado.
+                    </p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" onclick="openAddSubjectModal()"
+                        class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-md shadow-blue-500/20 transition">
+                        <i class="fa-solid fa-plus mr-1.5"></i>Crear asignatura
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3">
+                        <i class="fa-solid fa-book-open"></i>
+                    </div>
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Asignaturas</p>
+                    <p id="subjectsTabTotal" class="text-2xl font-extrabold mt-1">0</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Asignaturas disponibles.</p>
+                </div>
+
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-3">
+                        <i class="fa-solid fa-user-check"></i>
+                    </div>
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Matriculado</p>
+                    <p id="subjectsTabEnrolled" class="text-2xl font-extrabold mt-1">0</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Asignaturas que cursas.</p>
+                </div>
+
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
+                    <div class="w-11 h-11 rounded-xl bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 flex items-center justify-center mb-3">
+                        <i class="fa-solid fa-users"></i>
+                    </div>
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Modo</p>
+                    <p id="subjectsTabMode" class="text-lg font-extrabold mt-2">Privado</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Puedes gestionar tus matrículas.</p>
+                </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                        <h3 class="font-bold text-lg">Asignaturas disponibles</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            Activa o desactiva tu matrícula en cada asignatura.
+                        </p>
+                    </div>
+                    <span id="subjectsTabHint" class="text-xs font-semibold text-slate-500 dark:text-slate-400"></span>
+                </div>
+
+                <div id="subjectsTabContainer" class="p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+                <div id="subjectsTabEmpty" class="hidden px-5 py-14 text-center">
+                    <div class="w-16 h-16 mx-auto rounded-2xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-2xl mb-4">
+                        <i class="fa-solid fa-book-open"></i>
+                    </div>
+                    <h3 class="font-bold text-lg">Todavía no hay asignaturas</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 mb-5">
+                        Crea la primera asignatura para que aparezca aquí y puedas matricularte.
+                    </p>
+                    <button type="button" onclick="openAddSubjectModal()"
+                        class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition">
+                        <i class="fa-solid fa-plus mr-1.5"></i>Crear primera asignatura
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- SECCIÓN DE AGENDA -->
         <div id="sectionAgenda" class="hidden space-y-6">
             <!-- TAREAS Y EXÁMENES EN LOS PRÓXIMOS 7 DÍAS (ARRIBA DEL TODO) -->
@@ -2018,6 +2189,35 @@
     <button class="floating-info-btn" onclick="openInfoModal()" title="Información">
         <i class="fa-solid fa-info text-lg"></i>
     </button>
+
+    <div id="notificationSettingsModal" class="modal-overlay">
+        <div class="modal-content dark:bg-slate-800 dark:text-slate-100 max-w-md w-[calc(100%-2rem)]">
+            <button class="modal-close-btn dark:text-slate-400 dark:hover:text-white" onclick="closeNotificationSettings()">&times;</button>
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                    <i class="fa-solid fa-bell"></i>
+                </div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900 dark:text-white">Notificaciones</h2>
+                    <p id="notificationStatusText" class="text-xs text-slate-500 dark:text-slate-400">Comprobando estado…</p>
+                </div>
+            </div>
+            <div class="p-3.5 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 text-xs leading-relaxed mb-4">
+                Recibirás avisos en el móvil sobre <strong>exámenes y deberes</strong>. El sistema avisa el día anterior y el mismo día.
+            </div>
+            <div id="notificationIosHint" class="hidden p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 text-xs leading-relaxed mb-4">
+                En iPhone/iPad, primero añade esta web a la <strong>pantalla de inicio</strong> y abre la app instalada para poder activar las notificaciones.
+            </div>
+            <div class="flex gap-2">
+                <button id="enableNotificationsBtn" onclick="enableNotifications()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-3 rounded-xl transition">
+                    <i class="fa-solid fa-bell mr-2"></i>Activar
+                </button>
+                <button id="disableNotificationsBtn" onclick="disableNotifications()" class="hidden flex-1 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold px-4 py-3 rounded-xl transition">
+                    <i class="fa-solid fa-bell-slash mr-2"></i>Desactivar
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div id="infoModal" class="modal-overlay">
         <div class="modal-content dark:bg-slate-800 dark:text-slate-100">
@@ -2370,6 +2570,44 @@
         </div>
     </div>
 
+    <!-- MODAL PARA CAMBIAR NOMBRE DE USUARIO -->
+    <div id="changeUsernameModal" class="password-change-overlay" role="dialog" aria-modal="true" aria-labelledby="changeUsernameTitle">
+        <div class="password-change-modal">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <div class="password-change-icon"><i class="fa-solid fa-user-pen"></i></div>
+                    <h2 id="changeUsernameTitle" class="text-xl font-extrabold text-slate-900 dark:text-white">Cambiar nombre de usuario</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                        Elige el nuevo nombre que aparecerá en tu cuenta.
+                    </p>
+                </div>
+                <button type="button" onclick="closeChangeUsernameModal()" class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition flex items-center justify-center" aria-label="Cerrar">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form id="changeUsernameForm" onsubmit="handleChangeUsername(event)" class="mt-5 space-y-4">
+                <div>
+                    <label for="newUsername" class="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1.5">Nuevo nombre de usuario</label>
+                    <input id="newUsername" type="text" autocomplete="username" required minlength="3" maxlength="30"
+                        pattern="[A-Za-z0-9._-]{3,30}"
+                        class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="ej. carlos_21">
+                    <p class="text-[11px] text-slate-400 mt-1.5">Entre 3 y 30 caracteres. Puedes usar letras, números, puntos, guiones y guiones bajos.</p>
+                </div>
+
+                <div class="flex gap-2 pt-1">
+                    <button type="button" onclick="closeChangeUsernameModal()" class="flex-1 px-4 py-3 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                        Cancelar
+                    </button>
+                    <button id="changeUsernameSubmit" type="submit" class="flex-1 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition shadow-md shadow-blue-500/20">
+                        <i class="fa-solid fa-check mr-1.5"></i>Guardar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- MODAL PARA CAMBIAR CONTRASEÑA -->
     <div id="changePasswordModal" class="password-change-overlay" role="dialog" aria-modal="true" aria-labelledby="changePasswordTitle">
         <div class="password-change-modal">
@@ -2584,7 +2822,78 @@
             await window.solicitarRestablecimiento(email);
         };
 
-                function openChangePasswordModal() {
+                function openChangeUsernameModal() {
+            if (!window.currentFirebaseUser) {
+                showToast('Inicia sesión para cambiar tu nombre de usuario.', 'warning');
+                return;
+            }
+
+            const modal = document.getElementById('changeUsernameModal');
+            const input = document.getElementById('newUsername');
+
+            if (input) {
+                input.value = window.currentFirebaseUser.displayName || '';
+                setTimeout(() => {
+                    input.focus();
+                    input.select();
+                }, 80);
+            }
+
+            if (modal) modal.classList.add('active');
+        }
+
+        function closeChangeUsernameModal() {
+            const modal = document.getElementById('changeUsernameModal');
+            if (modal) modal.classList.remove('active');
+        }
+
+        window.handleChangeUsername = async function(event) {
+            event.preventDefault();
+
+            const input = document.getElementById('newUsername');
+            const submit = document.getElementById('changeUsernameSubmit');
+            const newUsername = input?.value || '';
+
+            if (!newUsername.trim()) {
+                showToast('Introduce un nombre de usuario.', 'warning');
+                return;
+            }
+
+            try {
+                if (submit) {
+                    submit.disabled = true;
+                    submit.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1.5"></i>Guardando...';
+                }
+
+                const result = await window.cambiarNombreUsuario(newUsername);
+
+                if (result?.changed === false) {
+                    closeChangeUsernameModal();
+                    showToast('El nombre de usuario ya es ese.', 'info');
+                    return;
+                }
+
+                const display = result.username;
+                const userLabel = document.getElementById('user-email-display');
+                const accountLabel = document.getElementById('header-account-user');
+
+                if (userLabel) userLabel.textContent = display;
+                if (accountLabel) accountLabel.textContent = display;
+
+                closeChangeUsernameModal();
+                showToast('Tu nombre de usuario se ha cambiado correctamente.', 'success');
+            } catch (error) {
+                console.error('Error al cambiar nombre de usuario:', error);
+                showToast(error?.message || 'No se pudo cambiar el nombre de usuario.', 'danger');
+            } finally {
+                if (submit) {
+                    submit.disabled = false;
+                    submit.innerHTML = '<i class="fa-solid fa-check mr-1.5"></i>Guardar';
+                }
+            }
+        };
+
+        function openChangePasswordModal() {
             if (!window.currentFirebaseUser) {
                 showToast('Inicia sesión para cambiar tu contraseña.', 'warning');
                 return;
@@ -2717,17 +3026,21 @@
         window.addEventListener('keydown', function(e) {
             if (e.key !== 'Escape') return;
             const changeModal = document.getElementById('changePasswordModal');
+            const changeUsernameModal = document.getElementById('changeUsernameModal');
             const recoveryModal = document.getElementById('recoveryModal');
 
             if (changeModal?.classList.contains('active')) closeChangePasswordModal();
+            if (changeUsernameModal?.classList.contains('active')) closeChangeUsernameModal();
             if (recoveryModal?.classList.contains('active')) closeRecoveryModal();
         });
 
         document.addEventListener('click', function(e) {
             const changeModal = document.getElementById('changePasswordModal');
+            const changeUsernameModal = document.getElementById('changeUsernameModal');
             const recoveryModal = document.getElementById('recoveryModal');
 
             if (changeModal && e.target === changeModal) closeChangePasswordModal();
+            if (changeUsernameModal && e.target === changeUsernameModal) closeChangeUsernameModal();
             if (recoveryModal && e.target === recoveryModal) closeRecoveryModal();
         });
 
@@ -2770,6 +3083,9 @@
                         <p class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sesión iniciada como</p>
                         <p id="header-account-user" class="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate mt-0.5"></p>
                     </div>
+                    <button onclick="openChangeUsernameModal(); closeHeaderAccountMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
+                        <i class="fa-solid fa-user-pen w-5 text-blue-500"></i><span>Cambiar nombre de usuario</span>
+                    </button>
                     <button onclick="openChangePasswordModal(); closeHeaderAccountMenu();" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold text-left flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition">
                         <i class="fa-solid fa-key w-5 text-blue-500"></i><span>Cambiar contraseña</span>
                     </button>
@@ -2867,8 +3183,31 @@
             loadFromLocalStorage();
             initTheme();
             renderApp(true);
+            startCurrentTimeRefresh();
             if (!currentUser) openLoginPrivacy();
         });
+
+        let currentTimeRefreshInterval = null;
+
+        function startCurrentTimeRefresh() {
+            if (currentTimeRefreshInterval) clearInterval(currentTimeRefreshInterval);
+
+            const refresh = () => {
+                // Re-render only the time-dependent parts. This keeps the schedule
+                // synchronized with the browser's local clock without reloading data.
+                renderScheduleTable();
+                renderProximasClases();
+            };
+
+            // Align the first automatic refresh with the next minute.
+            const now = new Date();
+            const delay = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+
+            setTimeout(() => {
+                refresh();
+                currentTimeRefreshInterval = setInterval(refresh, 60 * 1000);
+            }, Math.max(250, delay));
+        }
 
         function parseSlotStartTime(slotLabel) {
             if (!slotLabel) return 0;
@@ -3131,10 +3470,12 @@
             const btnSchedule = document.getElementById('tabBtnSchedule');
             const btnFaltas = document.getElementById('tabBtnFaltas');
             const btnAgenda = document.getElementById('tabBtnAgenda');
+            const btnAsignaturas = document.getElementById('tabBtnAsignaturas');
 
             const secSchedule = document.getElementById('sectionSchedule');
             const secFaltas = document.getElementById('sectionFaltas');
             const secAgenda = document.getElementById('sectionAgenda');
+            const secAsignaturas = document.getElementById('sectionAsignaturas');
             const statsSummary = document.getElementById('stats-summary');
             const proximasSection = document.getElementById('proximas-clases-section');
 
@@ -3145,6 +3486,7 @@
             secSchedule.classList.add('hidden');
             secFaltas.classList.add('hidden');
             secAgenda.classList.add('hidden');
+            secAsignaturas.classList.add('hidden');
 
             if (statsSummary) statsSummary.classList.add('hidden');
             if (proximasSection) proximasSection.classList.add('hidden');
@@ -3153,6 +3495,7 @@
             btnSchedule.className = inactiveClass;
             btnFaltas.className = inactiveClass;
             btnAgenda.className = inactiveClass;
+            btnAsignaturas.className = inactiveClass;
 
             if (tab === 'home') {
                 if (dashboard) dashboard.classList.remove('hidden');
@@ -3173,7 +3516,103 @@
                 secAgenda.classList.remove('hidden');
                 btnAgenda.className = activeClass;
                 renderAgendaList();
+            } else if (tab === 'asignaturas') {
+                secAsignaturas.classList.remove('hidden');
+                btnAsignaturas.className = activeClass;
+                renderAsignaturasTab();
             }
+        }
+
+        function renderAsignaturasTab() {
+            const container = document.getElementById('subjectsTabContainer');
+            const empty = document.getElementById('subjectsTabEmpty');
+            const totalEl = document.getElementById('subjectsTabTotal');
+            const enrolledEl = document.getElementById('subjectsTabEnrolled');
+            const modeEl = document.getElementById('subjectsTabMode');
+            const hintEl = document.getElementById('subjectsTabHint');
+
+            if (!container) return;
+
+            const subjects = Array.isArray(window.appData?.subjects) ? window.appData.subjects : [];
+            const enrolled = subjects.filter(isSubjectEnrolled);
+
+            if (totalEl) totalEl.textContent = subjects.length;
+            if (enrolledEl) enrolledEl.textContent = enrolled.length;
+
+            const isShared = window.activeDataMode === 'shared';
+            if (modeEl) modeEl.textContent = isShared ? 'Clase' : 'Privado';
+            if (hintEl) {
+                hintEl.textContent = isShared
+                    ? 'Selecciona las asignaturas que cursas en esta clase.'
+                    : 'Tus asignaturas privadas.';
+            }
+
+            container.innerHTML = '';
+
+            if (!subjects.length) {
+                container.classList.add('hidden');
+                empty?.classList.remove('hidden');
+                return;
+            }
+
+            container.classList.remove('hidden');
+            empty?.classList.add('hidden');
+
+            subjects.forEach((sub, index) => {
+                const enrolledNow = isSubjectEnrolled(sub);
+                const colorClasses = [
+                    'border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20',
+                    'border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20',
+                    'border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/20',
+                    'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20'
+                ];
+                const color = colorClasses[index % colorClasses.length];
+
+                const card = document.createElement('div');
+                card.className = `rounded-2xl border p-4 transition ${enrolledNow ? color : 'border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30'}`;
+
+                const bilingual = sub.bilingual
+                    ? '<span class="inline-flex mt-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">BILINGÜE</span>'
+                    : '<span class="inline-flex mt-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">NO BILINGÜE</span>';
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <h4 class="font-bold truncate">${escapeHtml(sub.name)}</h4>
+                            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                ${bilingual}
+                                <span class="px-2 py-0.5 rounded-full ${enrolledNow ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300'} text-[10px] font-bold">
+                                    ${enrolledNow ? 'Matriculado' : 'No matriculado'}
+                                </span>
+                            </div>
+                        </div>
+                        <button type="button"
+                            onclick="toggleSubjectEnrollment('${sub.id}')"
+                            class="shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition ${enrolledNow ? 'bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300' : 'bg-blue-600 hover:bg-blue-700 text-white'}">
+                            <i class="fa-solid ${enrolledNow ? 'fa-user-minus' : 'fa-user-plus'} mr-1"></i>
+                            ${enrolledNow ? 'Desmatricular' : 'Matricularme'}
+                        </button>
+                    </div>
+                    <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+                        <div class="rounded-xl bg-white/70 dark:bg-slate-800/60 p-2.5">
+                            <span class="block text-slate-400">Horas</span>
+                            <strong>${escapeHtml(String(sub.totalHours ?? 0))} h</strong>
+                        </div>
+                        <div class="rounded-xl bg-white/70 dark:bg-slate-800/60 p-2.5">
+                            <span class="block text-slate-400">Faltas</span>
+                            <strong>${enrolledNow ? (sub.absences || 0) : 0} h</strong>
+                        </div>
+                    </div>
+                    <div class="mt-3 flex justify-end gap-2">
+                        <button type="button" onclick="openEditSubjectModal('${sub.id}')"
+                            class="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-300 transition">
+                            <i class="fa-solid fa-pen mr-1"></i>Editar
+                        </button>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
         }
 
         function switchFaltasSubTab(subTab) {
@@ -3218,6 +3657,7 @@
             renderWeekHeaderDates();
             renderScheduleTable();
             renderSubjectsList();
+            renderAsignaturasTab();
             renderHistorySection();
             renderAgendaEnrollmentPanel();
             renderAgendaList();
@@ -3946,12 +4386,9 @@
                             </div>
 
                             <div class="flex items-center space-x-2">
-                                <button onclick="openEditSubjectModal('${sub.id}')" title="Editar asignatura" class="p-2 text-slate-400 hover:text-blue-500 transition text-sm">
-                                    <i class="fa-solid fa-pen"></i>
-                                </button>
-                                <button onclick="deleteSubject('${sub.id}')" title="Eliminar asignatura" class="p-2 text-slate-400 hover:text-rose-500 transition text-sm">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
+                                <span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                                    Gestiona las asignaturas desde el apartado Asignaturas
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -4550,71 +4987,22 @@
             updateClassVisuals();
         }
 
-        window.selectLocalMode = async function() {
-            const user = window.currentFirebaseUser;
-            if (!user) return;
-
+        window.selectLocalMode = function() {
+            if (!window.currentFirebaseUser) return;
             stopDataListener();
             window.activeClassId = null;
             window.activeDataMode = 'private';
             localStorage.setItem('attendance_app_mode', 'private');
-
-            // En modo privado los datos pertenecen a la cuenta, no al dispositivo.
-            // Primero recuperamos Firebase. localStorage solo sirve como respaldo.
-            let loadedFromCloud = false;
-
-            try {
-                const cloudRef = window.firebaseRef(window.firebaseDb, 'users/' + user.uid + '/appData');
-                const cloudSnapshot = await window.firebaseGet(cloudRef);
-
-                if (cloudSnapshot.exists()) {
-                    window.appData = cloudSnapshot.val() || {};
-                    loadedFromCloud = true;
-
-                    if (!window.appData.timeSlots || window.appData.timeSlots.length === 0) {
-                        window.appData.timeSlots = getDefaultTimeSlots();
-                    }
-                    if (!window.appData.subjects) window.appData.subjects = [];
-                    if (!window.appData.schedule) window.appData.schedule = {};
-                    if (!window.appData.absenceLogs) window.appData.absenceLogs = [];
-                    if (!window.appData.agendaTasks) window.appData.agendaTasks = [];
-                    if (window.appData.globalLimit === undefined) window.appData.globalLimit = 15;
-
-                    const serialized = JSON.stringify(window.appData);
-                    localStorage.setItem('attendance_app_hours_data', serialized);
-                    localStorage.setItem('attendance_private_app_data', serialized);
-                }
-            } catch (error) {
-                console.error('No se pudieron cargar los datos privados desde Firebase:', error);
+            const privateCache = localStorage.getItem('attendance_private_app_data');
+            if (privateCache) {
+                try { window.appData = JSON.parse(privateCache); localStorage.setItem('attendance_app_hours_data', privateCache); } catch(e) {}
+            } else if (window.loadFromLocalStorage) {
+                window.loadFromLocalStorage();
             }
-
-            // Si Firebase todavía no tiene datos, recuperamos la copia local
-            // y la subimos a la cuenta para que quede disponible en otros dispositivos.
-            if (!loadedFromCloud) {
-                const privateCache = localStorage.getItem('attendance_private_app_data');
-
-                if (privateCache) {
-                    try {
-                        window.appData = JSON.parse(privateCache);
-                        localStorage.setItem('attendance_app_hours_data', privateCache);
-                    } catch (e) {
-                        console.error('Error cargando la copia local privada:', e);
-                    }
-                } else if (window.loadFromLocalStorage) {
-                    window.loadFromLocalStorage();
-                }
-
-                if (window.saveDataToCloud && window.appData) {
-                    await window.saveDataToCloud(window.appData);
-                }
-            }
-
             enterAppShell();
             updateModeSwitcherUI();
-
-            // A partir de aquí mantenemos la sincronización en tiempo real.
-            listenToCloudData(user.uid);
-            showToast('Modo privado activado y sincronizado', 'success');
+            listenToCloudData(window.currentFirebaseUser.uid);
+            showToast('Modo privado activado', 'info');
         }
 
         function updateModeSwitcherUI() {
@@ -5141,7 +5529,7 @@ window.submitSuggestion = async function(e){
 function isSharedOwner(){ return !!(window.activeDataMode==='shared' && window.activeClassId && window.currentFirebaseUser && window.activeClassOwnerUid===window.currentFirebaseUser.uid); }
 function isSharedStudent(){ return window.activeDataMode==='shared' && !!window.activeClassId && !isSharedOwner(); }
 function updateMobileThemeIcon(){ const i=document.getElementById('mobileThemeIcon'); if(i) i.className='fa-solid '+(document.documentElement.classList.contains('dark')?'fa-sun':'fa-moon')+' text-base'; }
-function updateMobileNav(){ ['home','schedule','agenda','faltas'].forEach(t=>{const b=document.getElementById('mobileNav'+t.charAt(0).toUpperCase()+t.slice(1)); if(b)b.classList.toggle('active',t==='home' ? false : currentMainTab===t);}); updateMobileThemeIcon(); }
+function updateMobileNav(){ ['home','schedule','agenda','faltas','asignaturas'].forEach(t=>{const b=document.getElementById('mobileNav'+t.charAt(0).toUpperCase()+t.slice(1)); if(b)b.classList.toggle('active',t==='home' ? false : currentMainTab===t);}); updateMobileThemeIcon(); }
 function handleMobileClassButton(event){
   // El botón Clase de la barra inferior reutiliza el mismo menú de cambio de modo.
   // Evitamos que el listener global de clic lo cierre inmediatamente.
@@ -5498,10 +5886,112 @@ function renderDashboard(){
  const name=(window.currentFirebaseUser?.displayName||document.getElementById('user-email-display')?.textContent||'Usuario').trim()||'Usuario';
  renderDailyJoke();
  set('dashboardGreeting','¡Hola, '+name+'!'); set('dashPendingCount',tasks.length); set('dashUpcomingCount',next7.length); set('dashSubjectsCount',(window.appData.subjects||[]).filter(isSubjectEnrolled).length); set('dashAbsencesCount',(window.appData.absenceLogs||[]).length);
- if(upcoming[0]){set('dashboardNextTask',upcoming[0].title||'Sin título');set('dashboardNextTaskMeta',(upcoming[0].subjectName||'')+' · '+formatDashboardDate(upcoming[0].dueDate));}else{set('dashboardNextTask','Nada pendiente');set('dashboardNextTaskMeta','No tienes tareas próximas.');}
+ const upcomingTasks=upcoming.filter(t=>t.type!=='exam');
+ const upcomingExams=upcoming.filter(t=>t.type==='exam');
+ if(upcomingTasks[0]){
+   set('dashboardNextTask',upcomingTasks[0].title||'Sin título');
+   set('dashboardNextTaskMeta',(upcomingTasks[0].subjectName||'')+' · '+formatDashboardDate(upcomingTasks[0].dueDate));
+ }else{
+   set('dashboardNextTask','Nada pendiente');
+   set('dashboardNextTaskMeta','No tienes tareas próximas.');
+ }
+ if(upcomingExams[0]){
+   set('dashboardNextExam',upcomingExams[0].title||'Sin título');
+   set('dashboardNextExamMeta',(upcomingExams[0].subjectName||'')+' · '+formatDashboardDate(upcomingExams[0].dueDate));
+ }else{
+   set('dashboardNextExam','Nada pendiente');
+   set('dashboardNextExamMeta','No tienes exámenes próximos.');
+ }
  const slots=window.appData.timeSlots||[]; const today=new Date(); let next=null; for(let d=0;d<7&&!next;d++){let day=(today.getDay()+6+d)%7;if(day>4)continue; for(const slot of slots){const subs=getScheduledSubjects(day+'_'+slot.id).filter(isSubjectEnrolled);if(subs.length){next={sub:subs[0],subs,slot,day};break;}}} if(next){set('dashboardNextClass',next.subs.map(subjectDisplayName).join(' / '));set('dashboardNextClassMeta',DAYS_NAMES[next.day]+' · '+next.slot.label);}else{set('dashboardNextClass','Sin clases próximas');set('dashboardNextClassMeta','No hay clases matriculadas próximas.');}
 }
 function formatDashboardDate(v){if(!v)return 'Sin fecha';const p=String(v).split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v;}
+
+// ===== NOTIFICACIONES PUSH =====
+(function initNotifications(){
+ const VAPID_KEY=window.NOTIFICATIONS_VAPID_KEY||'';
+ const CONFIG_READY=!!VAPID_KEY && !VAPID_KEY.includes('REEMPLAZA');
+ const tokenPath=(uid,hash)=>`users/${uid}/notificationTokens/${hash}`;
+ async function hashToken(token){
+   const data=new TextEncoder().encode(token);
+   const digest=await crypto.subtle.digest('SHA-256',data);
+   return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+ }
+ function isIos(){return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);}
+ function isStandalone(){return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone===true;}
+ function setNotificationStatus(text,enabled){
+   const st=document.getElementById('notificationStatusText'); if(st) st.textContent=text;
+   const menu=document.getElementById('notificationMenuStatus'); if(menu){menu.textContent=enabled?'Activadas':'Desactivadas';menu.className='ml-auto text-[10px] font-bold '+(enabled?'text-emerald-500':'text-slate-400');}
+   const en=document.getElementById('enableNotificationsBtn'); const dis=document.getElementById('disableNotificationsBtn');
+   if(en) en.classList.toggle('hidden',!!enabled); if(dis) dis.classList.toggle('hidden',!enabled);
+ }
+ async function getStoredTokens(){
+   const uid=window.currentFirebaseUser?.uid; if(!uid)return [];
+   try{const snap=await window.firebaseGet(window.firebaseRef(window.firebaseDb,`users/${uid}/notificationTokens`)); return snap.exists()?snap.val():{};}catch(e){return {};}
+ }
+ window.refreshNotificationUI=async function(){
+   const uid=window.currentFirebaseUser?.uid;
+   if(!uid){setNotificationStatus('Inicia sesión para activar las notificaciones.',false);return;}
+   if(!('Notification' in window) || !('serviceWorker' in navigator) || !messaging){setNotificationStatus('Este navegador no admite las notificaciones push necesarias.',false);return;}
+   const tokens=await getStoredTokens();
+   const enabled=Object.keys(tokens||{}).length>0 && Notification.permission==='granted';
+   if(Notification.permission==='denied') setNotificationStatus('Bloqueadas por el navegador. Permítelas desde los ajustes del sitio.',false);
+   else if(enabled) setNotificationStatus('Notificaciones activadas en este dispositivo.',true);
+   else setNotificationStatus('Las notificaciones están desactivadas en este dispositivo.',false);
+   const hint=document.getElementById('notificationIosHint');
+   if(hint) hint.classList.toggle('hidden',!(isIos()&&!isStandalone()));
+ };
+ window.openNotificationSettings=function(){
+   const m=document.getElementById('notificationSettingsModal'); if(m)m.classList.add('active');
+   window.refreshNotificationUI?.();
+ };
+ window.closeNotificationSettings=function(){const m=document.getElementById('notificationSettingsModal');if(m)m.classList.remove('active');};
+ window.enableNotifications=async function(){
+   const user=window.currentFirebaseUser;
+   if(!user){showToast('Inicia sesión para activar las notificaciones.','warning');return;}
+   if(!CONFIG_READY){showToast('Falta configurar la clave VAPID de Firebase en notifications-config.js.','warning');return;}
+   if(isIos()&&!isStandalone()){showToast('En iPhone/iPad, añade primero la web a la pantalla de inicio y abre la app instalada.','warning');return;}
+   if(!('Notification' in window)||!('serviceWorker' in navigator)||!messaging){showToast('Tu navegador no admite las notificaciones push necesarias.','warning');return;}
+   try{
+     const permission=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+     if(permission!=='granted'){setNotificationStatus('No se concedió permiso para las notificaciones.',false);return;}
+     const reg=await navigator.serviceWorker.register('./firebase-messaging-sw.js',{scope:'./firebase-messaging-push-scope'});
+     notificationServiceWorkerRegistration=reg;
+     const token=await getToken(messaging,{vapidKey:VAPID_KEY,serviceWorkerRegistration:reg});
+     if(!token)throw new Error('Firebase no devolvió un token de notificación.');
+     const hash=await hashToken(token);
+     await window.firebaseSet(window.firebaseRef(window.firebaseDb,tokenPath(user.uid,hash)),{token,createdAt:Date.now(),updatedAt:Date.now(),userAgent:navigator.userAgent.slice(0,250)});
+     localStorage.setItem('notifications_enabled','true');
+     setNotificationStatus('Notificaciones activadas en este dispositivo.',true);
+     showToast('Notificaciones activadas.','success');
+   }catch(error){
+     console.error('Error activando notificaciones:',error);
+     showToast('No se pudieron activar las notificaciones: '+(error?.message||'error desconocido'),'danger');
+     window.refreshNotificationUI?.();
+   }
+ };
+ window.disableNotifications=async function(){
+   const user=window.currentFirebaseUser;
+   if(!user)return;
+   try{
+     const tokens=await getStoredTokens();
+     await Promise.all(Object.keys(tokens||{}).map(k=>window.firebaseSet(window.firebaseRef(window.firebaseDb,tokenPath(user.uid,k)),null)));
+     if(messaging){try{await deleteToken(messaging);}catch(e){console.warn('No se pudo eliminar el token local:',e);}}
+     localStorage.removeItem('notifications_enabled');
+     setNotificationStatus('Notificaciones desactivadas en este dispositivo.',false);
+     showToast('Notificaciones desactivadas.','info');
+   }catch(error){console.error(error);showToast('No se pudieron desactivar las notificaciones.','danger');}
+ };
+ if(messaging){
+   onMessage(messaging,(payload)=>{
+     const d=payload?.data||{};
+     const title=d.title||'Control Faltas';
+     const body=d.body||'Tienes un evento próximo.';
+     if(Notification.permission==='granted'){
+       try{new Notification(title,{body,icon:'./sinfondo.png',badge:'./sinfondo.png',tag:d.notificationId||undefined,data:{url:d.url||'./'}});}catch(e){console.warn('No se pudo mostrar la notificación en primer plano:',e);}
+     }
+   });
+ }
+})();
 async function openClassEnrollmentStats(){
  if(!isSharedOwner()){showToast('Solo el creador puede ver este resumen','warning');return;}
  const modal=document.getElementById('classEnrollmentStatsModal'), list=document.getElementById('classEnrollmentStatsList'); if(!modal||!list)return;
