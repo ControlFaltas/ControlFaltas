@@ -1,258 +1,231 @@
-import crypto from 'node:crypto';
 import admin from 'firebase-admin';
 
-const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'control-faltas-26';
-const DATABASE_URL = process.env.FIREBASE_DATABASE_URL || 'https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app';
-const APP_URL = process.env.APP_URL || 'https://TU-USUARIO.github.io/TU-REPOSITORIO/';
-const SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
+const PROJECT_ID = 'control-faltas-26';
+const DATABASE_URL = 'https://control-faltas-26-default-rtdb.europe-west1.firebasedatabase.app';
+const APP_URL = process.env.APP_URL || './';
+const MADRID_TZ = 'Europe/Madrid';
 
-if (!SERVICE_ACCOUNT_JSON) {
-  throw new Error('Falta el secreto FIREBASE_SERVICE_ACCOUNT en GitHub Actions.');
-}
+function initAdmin() {
+  if (admin.apps.length) return admin.app();
 
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(SERVICE_ACCOUNT_JSON);
-} catch (error) {
-  throw new Error('FIREBASE_SERVICE_ACCOUNT no contiene un JSON válido.');
-}
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) throw new Error('Falta FIREBASE_SERVICE_ACCOUNT en el entorno.');
 
-if (!admin.apps.length) {
-  admin.initializeApp({
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(raw);
+  } catch (error) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT no contiene un JSON válido.');
+  }
+
+  return admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     databaseURL: DATABASE_URL,
     projectId: PROJECT_ID
   });
 }
 
+initAdmin();
 const db = admin.database();
 const messaging = admin.messaging();
 
-function madridNow() {
+function madridParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Madrid',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+    timeZone: MADRID_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
     hourCycle: 'h23'
-  }).formatToParts(new Date());
-  const get = (type) => parts.find((p) => p.type === type)?.value || '';
-  return {
-    date: `${get('year')}-${get('month')}-${get('day')}`,
-    hour: Number(get('hour')),
-    minute: Number(get('minute'))
-  };
+  }).formatToParts(date);
+  return Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
 }
 
-function addDays(dateString, days) {
-  const date = new Date(`${dateString}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
+function madridDateKey(date = new Date()) {
+  const p = madridParts(date);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+function addDays(dateKey, amount) {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + amount);
   return date.toISOString().slice(0, 10);
 }
 
-function reminderKey(task, reminderType, scope) {
-  return crypto.createHash('sha256')
-    .update(`${scope}|${task.id}|${task.dueDate}|${reminderType}`)
-    .digest('hex');
+function eventKey(task, classId = 'private') {
+  return `${classId}:${task.id}:${task.dueDate}`;
 }
 
-function cleanTokens(tokenNode) {
-  if (!tokenNode || typeof tokenNode !== 'object') return [];
-  return Object.values(tokenNode)
-    .map((item) => item?.token)
-    .filter((token) => typeof token === 'string' && token.length > 20);
+function isEnrolled(subject, member) {
+  if (!subject) return false;
+  const excluded = new Set(member?.excludedSubjectIds || member?.classPersonalAttendance?.excludedSubjectIds || []);
+  return !excluded.has(subject.id);
 }
 
-function isValidTask(task) {
-  return task && task.id && task.dueDate && task.title && (task.type === 'exam' || task.type !== 'exam');
+function safeTokens(value) {
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value)
+    .map(([key, value]) => ({ key, ...(value || {}) }))
+    .filter(x => typeof x.token === 'string' && x.token.length > 20);
 }
 
-function taskText(task, reminderType) {
-  const kind = task.type === 'exam' ? 'examen' : 'deberes';
-  const when = reminderType === 'day-before' ? 'mañana' : 'hoy';
-  const subject = task.subjectName ? ` · ${task.subjectName}` : '';
-  return {
-    title: task.type === 'exam' ? '📚 Examen próximo' : '📝 Deberes próximos',
-    body: `${task.title}${subject} es ${when}.`
-  };
+async function sendToUser(uid, task, classId, member) {
+  const tokenSnap = await db.ref(`users/${uid}/notificationTokens`).get();
+  const tokens = safeTokens(tokenSnap.val());
+  if (!tokens.length) return 0;
+
+  const typeLabel = task.type === 'exam' ? 'Examen' : 'Entrega';
+  const subject = task.subjectName || 'Asignatura';
+  const title = `${typeLabel}: ${subject}`;
+  const body = task.title || 'Tienes un evento próximo.';
+  const notificationId = `${classId}-${task.id}-${task.dueDate}`;
+
+  let sent = 0;
+  for (const item of tokens) {
+    try {
+      await messaging.send({
+        token: item.token,
+        notification: { title, body },
+        data: {
+          title,
+          body,
+          notificationId,
+          eventId: String(task.id),
+          dueDate: String(task.dueDate),
+          type: String(task.type || 'homework'),
+          subjectId: String(task.subjectId || ''),
+          url: APP_URL
+        },
+        webpush: {
+          fcmOptions: { link: APP_URL }
+        }
+      });
+      sent++;
+    } catch (error) {
+      const code = error?.errorInfo?.code || error?.code || '';
+      if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+        await db.ref(`users/${uid}/notificationTokens/${item.key}`).remove();
+      } else {
+        console.error(`Error enviando a ${uid}:`, code || error.message);
+      }
+    }
+  }
+  return sent;
 }
 
-async function alreadySent(uid, fingerprint) {
-  const snap = await db.ref(`notificationSent/${uid}/${fingerprint}`).get();
+async function alreadySent(uid, notificationId) {
+  const snap = await db.ref(`notificationSends/${uid}/${notificationId}`).get();
   return snap.exists();
 }
 
-async function markSent(uid, fingerprint, info) {
-  await db.ref(`notificationSent/${uid}/${fingerprint}`).set({
-    ...info,
-    sentAt: Date.now()
+async function markSent(uid, notificationId, metadata) {
+  await db.ref(`notificationSends/${uid}/${notificationId}`).set({
+    sentAt: admin.database.ServerValue.TIMESTAMP,
+    ...metadata
   });
 }
 
-async function sendToUser(uid, tokens, task, reminderType, scope) {
-  if (!tokens.length) return { sent: false, reason: 'no-tokens' };
+async function processUser(uid, userData, nowDateKey, sendMode) {
+  const tasks = userData?.appData?.agendaTasks || [];
+  const subjects = userData?.appData?.subjects || [];
+  const member = userData?.classPersonalAttendance || {};
+  let sent = 0;
 
-  const fingerprint = reminderKey(task, reminderType, scope);
-  if (await alreadySent(uid, fingerprint)) return { sent: false, reason: 'already-sent' };
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    if (!task?.id || !task?.dueDate || task.completed) continue;
+    const due = String(task.dueDate);
+    const targetDate = sendMode === 'day-before' ? addDays(nowDateKey, 1) : nowDateKey;
+    if (due !== targetDate) continue;
 
-  const text = taskText(task, reminderType);
-  const url = `${APP_URL}#agenda`;
-  const payload = {
-    data: {
-      title: text.title,
-      body: text.body,
-      url,
-      notificationId: fingerprint,
-      taskId: String(task.id),
-      taskType: task.type === 'exam' ? 'exam' : 'task',
-      reminderType
+    const subject = subjects.find(s => s.id === task.subjectId);
+    if (!subject || !isEnrolled(subject, member)) continue;
+
+    const notificationId = `${eventKey(task)}:${sendMode}`;
+    if (await alreadySent(uid, notificationId)) continue;
+
+    const n = await sendToUser(uid, task, 'private', member);
+    if (n > 0) {
+      await markSent(uid, notificationId, { mode: sendMode, dueDate: due, type: 'private' });
+      sent += n;
     }
-  };
-
-  let sentCount = 0;
-  const invalidTokens = [];
-
-  for (let i = 0; i < tokens.length; i += 500) {
-    const batch = tokens.slice(i, i + 500);
-    const response = await messaging.sendEachForMulticast({ tokens: batch, ...payload });
-    sentCount += response.successCount;
-
-    response.responses.forEach((result, index) => {
-      if (!result.success) {
-        const code = result.error?.code || '';
-        if (
-          code.includes('registration-token-not-registered') ||
-          code.includes('invalid-registration-token')
-        ) {
-          invalidTokens.push(batch[index]);
-        }
-      }
-    });
   }
-
-  if (invalidTokens.length) {
-    const tokenSnapshot = await db.ref(`users/${uid}/notificationTokens`).get();
-    const current = tokenSnapshot.val() || {};
-    const updates = {};
-    for (const [hash, item] of Object.entries(current)) {
-      if (invalidTokens.includes(item?.token)) updates[hash] = null;
-    }
-    if (Object.keys(updates).length) await db.ref(`users/${uid}/notificationTokens`).update(updates);
-  }
-
-  if (sentCount > 0) {
-    await markSent(uid, fingerprint, {
-      taskId: String(task.id),
-      dueDate: task.dueDate,
-      reminderType,
-      scope,
-      title: task.title
-    });
-    return { sent: true, sentCount };
-  }
-
-  return { sent: false, reason: 'send-failed' };
+  return sent;
 }
 
-function shouldSend(task, today, hour) {
-  if (!isValidTask(task)) return null;
-  if (task.completed) return null;
+async function processSharedClasses(nowDateKey, sendMode) {
+  const classesSnap = await db.ref('classes').get();
+  const classes = classesSnap.val() || {};
+  let sent = 0;
 
-  if (hour === 18 && task.dueDate === addDays(today, 1)) return 'day-before';
-  if (hour === 8 && task.dueDate === today) return 'same-day';
-  return null;
+  for (const [classId, classData] of Object.entries(classes)) {
+    const tasks = classData?.appData?.agendaTasks || [];
+    const subjects = classData?.appData?.subjects || [];
+    const members = classData?.members || {};
+    if (!Array.isArray(tasks) || !Object.keys(members).length) continue;
+
+    for (const task of tasks) {
+      if (!task?.id || !task?.dueDate || task.completed) continue;
+      const targetDate = sendMode === 'day-before' ? addDays(nowDateKey, 1) : nowDateKey;
+      if (String(task.dueDate) !== targetDate) continue;
+
+      const subject = subjects.find(s => s.id === task.subjectId);
+      if (!subject) continue;
+
+      for (const uid of Object.keys(members)) {
+        const personalSnap = await db.ref(`classAttendance/${classId}/${uid}`).get();
+        const personal = personalSnap.val() || {};
+        if ((personal.completedAgendaIds || []).includes(task.id)) continue;
+        if ((personal.hiddenAgendaIds || []).includes(task.id)) continue;
+        if ((personal.excludedSubjectIds || []).includes(subject.id)) continue;
+
+        const notificationId = `${eventKey(task, classId)}:${sendMode}`;
+        if (await alreadySent(uid, notificationId)) continue;
+
+        const n = await sendToUser(uid, task, classId, personal);
+        if (n > 0) {
+          await markSent(uid, notificationId, {
+            mode: sendMode,
+            dueDate: task.dueDate,
+            type: 'shared',
+            classId
+          });
+          sent += n;
+        }
+      }
+    }
+  }
+  return sent;
 }
 
 async function main() {
-  const now = madridNow();
-  console.log(`Hora de Madrid: ${now.date} ${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`);
+  const now = new Date();
+  const parts = madridParts(now);
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  const today = madridDateKey(now);
 
-  // Solo trabajamos durante las dos ventanas de envío.
-  if (now.hour !== 8 && now.hour !== 18) {
-    console.log('Fuera de la ventana de recordatorios.');
+  // GitHub Actions runs every 15 minutes. Only act during the 08:00 and 18:00 windows.
+  let sendMode = null;
+  if (hour === 8 && minute < 15) sendMode = 'same-day';
+  if (hour === 18 && minute < 15) sendMode = 'day-before';
+
+  if (!sendMode) {
+    console.log(`Fuera de ventana de envío (${parts.hour}:${parts.minute} Madrid).`);
     return;
   }
 
-  const [usersSnap, classesSnap, classAttendanceSnap] = await Promise.all([
-    db.ref('users').get(),
-    db.ref('classes').get(),
-    db.ref('classAttendance').get()
-  ]);
-
+  const usersSnap = await db.ref('users').get();
   const users = usersSnap.val() || {};
-  const classes = classesSnap.val() || {};
-  const classAttendance = classAttendanceSnap.val() || {};
-
   let sent = 0;
-  let skipped = 0;
 
-  // 1. Agenda privada: cada usuario recibe solo sus propios eventos.
   for (const [uid, userData] of Object.entries(users)) {
-    const tokens = cleanTokens(userData?.notificationTokens);
-    if (!tokens.length) continue;
-
-    const tasks = Array.isArray(userData?.appData?.agendaTasks)
-      ? userData.appData.agendaTasks
-      : Object.values(userData?.appData?.agendaTasks || {});
-
-    for (const task of tasks) {
-      const reminderType = shouldSend(task, now.date, now.hour);
-      if (!reminderType) continue;
-      const result = await sendToUser(uid, tokens, task, reminderType, `private:${uid}`);
-      if (result.sent) sent += result.sentCount;
-      else skipped++;
-    }
+    sent += await processUser(uid, userData, today, sendMode);
   }
 
-  // 2. Clases compartidas: cada alumno recibe el evento solo si está matriculado
-  // en la asignatura correspondiente y no lo ha ocultado/completado para sí mismo.
-  for (const [classId, classData] of Object.entries(classes)) {
-    const tasks = Array.isArray(classData?.appData?.agendaTasks)
-      ? classData.appData.agendaTasks
-      : Object.values(classData?.appData?.agendaTasks || {});
-    if (!tasks.length) continue;
-
-    const deleted = new Set(Object.keys(classData?.deletedAgendaTasks || {}));
-    const members = classData?.members || {};
-
-    for (const [uid] of Object.entries(members)) {
-      const userData = users[uid] || {};
-      const tokens = cleanTokens(userData.notificationTokens);
-      if (!tokens.length) continue;
-
-      const personal = classAttendance?.[classId]?.[uid] || {};
-      const excluded = new Set(personal.excludedSubjectIds || []);
-      const completed = new Set(personal.completedAgendaIds || []);
-      const hidden = new Set(personal.hiddenAgendaIds || []);
-
-      const classSubjects = Array.isArray(classData?.appData?.subjects)
-        ? classData.appData.subjects
-        : Object.values(classData?.appData?.subjects || {});
-
-      for (const task of tasks) {
-        if (deleted.has(String(task?.id))) continue;
-        if (completed.has(String(task?.id)) || hidden.has(String(task?.id))) continue;
-
-        const subject = classSubjects.find((s) => String(s?.id) === String(task?.subjectId));
-        if (!subject) continue;
-        if (excluded.has(String(subject.id))) continue;
-
-        const reminderType = shouldSend(task, now.date, now.hour);
-        if (!reminderType) continue;
-
-        const result = await sendToUser(uid, tokens, task, reminderType, `class:${classId}`);
-        if (result.sent) sent += result.sentCount;
-        else skipped++;
-      }
-    }
-  }
-
-  console.log(`Proceso terminado. Notificaciones enviadas: ${sent}. Omitidas/repetidas: ${skipped}.`);
+  sent += await processSharedClasses(today, sendMode);
+  console.log(`Ventana ${sendMode}: ${sent} notificaciones enviadas.`);
 }
 
-main().catch((error) => {
+main().catch(error => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
 });
