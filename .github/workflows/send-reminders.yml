@@ -1,32 +1,26 @@
 name: Enviar recordatorios de agenda
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
-
-permissions:
-  contents: read
+    # Ajusta el cron según tus necesidades
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   send:
     runs-on: ubuntu-latest
-    env:
-      # CAMBIA ESTA URL por la URL real de tu PWA.
-      APP_URL: 'controlfaltas.es'
-      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
     steps:
-      - name: Descargar repositorio
+      - name: Checkout del código
         uses: actions/checkout@v4
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-         
+          node-version: '24'
 
       - name: Instalar dependencias
         run: npm install
 
-      - name: Enviar recordatorios
-        run: npm run send-reminders
+      - name: Ejecutar script de recordatorios
+        run: node index.js
