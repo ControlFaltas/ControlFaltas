@@ -2,7 +2,6 @@ name: Enviar recordatorios de agenda
 
 on:
   schedule:
-    # Ajusta el cron según tus necesidades
     - cron: '0 8 * * *'
   workflow_dispatch:
 
@@ -18,9 +17,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-
-      - name: Instalar dependencias
-        run: npm install
 
       - name: Ejecutar script de recordatorios
         run: node index.js
