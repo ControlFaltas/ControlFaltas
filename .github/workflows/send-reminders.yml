@@ -1,22 +1,32 @@
 name: Enviar recordatorios de agenda
 
 on:
-  schedule:
-    - cron: '0 8 * * *'
   workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
 
 jobs:
-  send:
+  enviar:
     runs-on: ubuntu-latest
 
+    env:
+      URL_DE_LA_APLICACION: "https://controlfaltas.es"
+      CUENTA_DE_SERVICIO_DE_FUEGO: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
     steps:
-      - name: Checkout del código
+      - name: Descargar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: 20
 
-      - name: Ejecutar script de recordatorios
-        run: node index.js
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Enviar recordatorios
+        run: npm run send-reminders
