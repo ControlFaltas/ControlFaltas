@@ -1190,7 +1190,7 @@
     /* Reserva espacio al final para la barra fija, sin crear huecos grandes entre secciones. */
     #main-content{padding-bottom:115px !important; flex-grow:0 !important}
     #proximas-clases-section{padding-bottom:24px !important}
-    #mobileBottomNav{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:85;gap:4px;padding:6px;background:rgba(255,255,255,.96);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.9);border-radius:22px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
+    #mobileBottomNav{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:85;gap:4px;padding:6px;background:rgba(255,255,255,.96);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.9);border-radius:32px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
     .dark #mobileBottomNav{background:rgba(15,23,42,.96);border-color:rgba(71,85,105,.7)}
     #mobileBottomNav > button{
       flex:1 1 0;
@@ -1201,7 +1201,7 @@
       max-height:52px !important;
       box-sizing:border-box;
       padding:6px 2px !important;
-      border-radius:15px;
+      border-radius:22px;
       font-size:10px;
       font-weight:750;
       line-height:1.1;
@@ -1219,11 +1219,11 @@
       padding:6px 2px !important;background:#2563eb;color:white;
       box-shadow:0 5px 14px rgba(37,99,235,.25);
     }
-    #mobileBottomNav .mobile-more-menu{position:absolute;right:0;bottom:calc(100% + 10px);width:min(270px,calc(100vw - 24px));grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:8px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.95);border-radius:18px;box-shadow:0 12px 35px rgba(15,23,42,.2)}
+    #mobileBottomNav .mobile-more-menu{position:absolute;right:0;bottom:calc(100% + 10px);width:min(270px,calc(100vw - 24px));grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:8px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.95);border-radius:24px;box-shadow:0 12px 35px rgba(15,23,42,.2)}
     #mobileBottomNav .mobile-more-menu:not(.hidden){display:grid!important}
     #mobileBottomNav .mobile-more-menu.hidden{display:none!important}
     .dark #mobileBottomNav .mobile-more-menu{background:rgba(15,23,42,.98);border-color:rgba(71,85,105,.8)}
-    #mobileBottomNav .mobile-more-menu button{width:100%;min-width:0;height:64px!important;min-height:64px!important;max-height:64px!important;padding:7px 3px!important;border-radius:12px;font-size:10px;font-weight:750;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:#64748b}
+    #mobileBottomNav .mobile-more-menu button{width:100%;min-width:0;height:64px!important;min-height:64px!important;max-height:64px!important;padding:7px 3px!important;border-radius:18px;font-size:10px;font-weight:750;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:#64748b}
     .dark #mobileBottomNav .mobile-more-menu button{color:#94a3b8}
     #mobileBottomNav .mobile-more-menu button.active{background:#2563eb!important;color:#fff!important;box-shadow:0 5px 14px rgba(37,99,235,.25)}
     /* En móvil el selector flotante se conserva solo para reutilizar su menú; se oculta su botón azul. */
