@@ -1273,6 +1273,21 @@
   header button[onclick="toggleDarkMode()"] { display: none !important; }
 }
 </style>
+<style id="mobile-tab-feedback">
+@media (max-width:640px){
+ #mobileBottomNav button, #main-tabs-nav button{
+   -webkit-tap-highlight-color: transparent;
+   transition: background-color .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease !important;
+ }
+ #mobileBottomNav button:active, #main-tabs-nav button:active{transform:scale(.94)}
+ #main-tabs-nav button.tab-pressed, #mobileBottomNav button.tab-pressed{
+   background:#2563eb !important;color:#fff !important;
+   box-shadow:0 5px 14px rgba(37,99,235,.28) !important;
+ }
+ #mobileBottomNav button.active{background:#2563eb !important;color:#fff !important}
+}
+</style>
+
 </head>
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
@@ -1310,6 +1325,9 @@
                 <button id="tabBtnAgenda" onclick="switchMainTab('agenda')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
                     <i class="fa-solid fa-book-bookmark"></i>
                     <span>Agenda</span>
+                </button>
+                <button id="tabBtnNotas" onclick="switchMainTab('notas')" class="px-4 py-2.5 rounded-xl font-semibold text-sm flex items-center space-x-2 transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 shrink-0">
+                    <i class="fa-solid fa-note-sticky"></i><span>Notas</span>
                 </button>
             </div>
         </div>
@@ -1386,6 +1404,7 @@
         <button id="mobileNavFaltas" onclick="switchMainTab('faltas')"><i class="fa-solid fa-user-xmark text-base"></i><span>Faltas</span></button>
         <button id="mobileNavAsignaturas" onclick="switchMainTab('asignaturas')"><i class="fa-solid fa-book-open text-base"></i><span>Asignaturas</span></button>
         <button id="mobileNavClass" onclick="handleMobileClassButton(event)"><i class="fa-solid fa-users text-base"></i><span>Clase</span></button>
+        <button id="mobileNavNotas" onclick="switchMainTab('notas')"><i class="fa-solid fa-note-sticky text-base"></i><span>Notas</span></button>
         <button onclick="toggleDarkMode()"><i id="mobileThemeIcon" class="fa-solid fa-moon text-base"></i><span>Modo</span></button>
     </nav>
     <!-- Selector Local / Clase: botón flotante abajo a la derecha -->
@@ -1751,7 +1770,61 @@
             </div>
         </section>
 
-        <div id="sectionSchedule" class="space-y-6">
+        <div id="sectionNotas" class="hidden space-y-6">
+  <div class="bg-white dark:bg-slate-800 p-5 sm:p-7 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
+    <div class="flex items-start gap-4 mb-6">
+      <div class="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 flex items-center justify-center text-xl"><i class="fa-solid fa-note-sticky"></i></div>
+      <div><h2 class="text-2xl font-extrabold tracking-tight">Notas y calificaciones</h2><p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Guarda recordatorios personales, apuntes y las notas que vayas sacando.</p></div>
+    </div>
+    <form id="notesForm" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+      <input id="noteEditId" type="hidden">
+      <label class="text-sm font-semibold">Tipo
+        <select id="noteType" class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3" required>
+          <option value="note">Apunte / recordatorio</option><option value="grade">Calificación</option>
+        </select>
+      </label>
+      <label class="text-sm font-semibold">Asignatura (opcional)
+        <select id="noteSubject" class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3"><option value="">Sin asignatura</option></select>
+      </label>
+      <label class="text-sm font-semibold sm:col-span-2">Título
+        <input id="noteTitle" maxlength="120" placeholder="Ej. Examen de matemáticas / Comprar cartulina" class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3" required>
+      </label>
+      <label id="noteGradeWrap" class="text-sm font-semibold hidden">Calificación (0–10)
+        <input id="noteGrade" type="text" inputmode="decimal" maxlength="6" pattern="(?:10(?:[.,]0{1,3})?|[0-9](?:[.,][0-9]{1,3})?)" placeholder="Ej. 8,375" class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3">
+        <span class="block text-xs font-normal text-slate-500 mt-1">Puedes usar hasta 3 decimales, con coma o punto.</span>
+      </label>
+      <label id="noteExamWrap" class="text-sm font-semibold sm:col-span-2 hidden">Examen realizado (opcional)
+        <select id="noteExam" class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3">
+          <option value="">Elegir un examen que ya has hecho…</option>
+        </select>
+        <span class="block text-xs font-normal text-slate-500 mt-1">Aparecen los exámenes de tu agenda cuya fecha ya ha pasado. También puedes escribir el título manualmente.</span>
+      </label>
+      <label class="text-sm font-semibold sm:col-span-2">Detalles
+        <textarea id="noteBody" rows="3" maxlength="4000" placeholder="Escribe aquí lo que quieras recordar..." class="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-3"></textarea>
+      </label>
+      <div class="sm:col-span-2 flex flex-wrap gap-2">
+        <button id="noteSubmitBtn" type="submit" class="rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-3"><i class="fa-solid fa-plus mr-2"></i>Guardar</button>
+        <button type="button" onclick="resetNoteForm()" class="rounded-xl bg-slate-100 dark:bg-slate-700 px-5 py-3 font-semibold">Cancelar</button>
+      </div>
+    </form>
+    <div class="mt-8 mb-8 rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 sm:p-5">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+        <div><h3 class="font-extrabold text-lg"><i class="fa-solid fa-chart-column text-indigo-500 mr-2"></i>Mis notas por asignatura</h3><p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Consulta las calificaciones de los exámenes y la media de cada asignatura.</p></div>
+        <span id="gradesOverviewCount" class="text-xs font-bold rounded-full bg-white dark:bg-slate-800 px-3 py-1">0 exámenes</span>
+      </div>
+      <div id="gradesBySubject" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+      <p id="gradesOverviewEmpty" class="text-sm text-slate-500 text-center py-5">Cuando guardes calificaciones de exámenes, aparecerán aquí agrupadas por asignatura.</p>
+    </div>
+    <div class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between mb-4">
+      <h3 class="font-extrabold text-lg">Mis apuntes y notas</h3>
+      <select id="notesFilter" onchange="renderNotes()" class="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm"><option value="all">Todo</option><option value="note">Apuntes</option><option value="grade">Calificaciones</option></select>
+    </div>
+    <div id="notesList" class="space-y-3"></div>
+    <p id="notesEmpty" class="hidden text-sm text-slate-500 text-center py-8">Todavía no has añadido nada. Puedes crear tu primer apunte o calificación arriba.</p>
+  </div>
+</div>
+
+<div id="sectionSchedule" class="space-y-6">
             <div class="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm">
                 
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
@@ -3430,6 +3503,23 @@
             localStorage.setItem('attendance_app_hours_data', JSON.stringify(window.appData));
             if (window.activeDataMode !== 'shared') {
                 localStorage.setItem('attendance_private_app_data', JSON.stringify(window.appData));
+            } else if (window.activeClassId && window.currentFirebaseUser) {
+                // En modo clase, las faltas son personales y se guardan en
+                // classAttendance/$classId/$uid, no en classes/$classId/appData.
+                // Sin sincronizar este array antes de guardar, al recargar reaparecían.
+                if (!window.classPersonalAttendance) {
+                    window.classPersonalAttendance = {
+                        absenceLogs: [], excludedSubjectIds: [],
+                        completedAgendaIds: [], hiddenAgendaIds: []
+                    };
+                }
+                window.classPersonalAttendance.absenceLogs = Array.isArray(window.appData?.absenceLogs)
+                    ? window.appData.absenceLogs
+                    : [];
+                localStorage.setItem(
+                    'attendance_shared_personal_' + window.activeClassId + '_' + window.currentFirebaseUser.uid,
+                    JSON.stringify(window.classPersonalAttendance)
+                );
             }
             if (window.saveDataToCloud) {
                 window.saveDataToCloud(window.appData);
@@ -3467,11 +3557,13 @@
             const btnFaltas = document.getElementById('tabBtnFaltas');
             const btnAgenda = document.getElementById('tabBtnAgenda');
             const btnAsignaturas = document.getElementById('tabBtnAsignaturas');
+            const btnNotas = document.getElementById('tabBtnNotas');
 
             const secSchedule = document.getElementById('sectionSchedule');
             const secFaltas = document.getElementById('sectionFaltas');
             const secAgenda = document.getElementById('sectionAgenda');
             const secAsignaturas = document.getElementById('sectionAsignaturas');
+            const secNotas = document.getElementById('sectionNotas');
             const statsSummary = document.getElementById('stats-summary');
             const proximasSection = document.getElementById('proximas-clases-section');
 
@@ -3483,6 +3575,7 @@
             secFaltas.classList.add('hidden');
             secAgenda.classList.add('hidden');
             secAsignaturas.classList.add('hidden');
+            if (secNotas) secNotas.classList.add('hidden');
 
             if (statsSummary) statsSummary.classList.add('hidden');
             if (proximasSection) proximasSection.classList.add('hidden');
@@ -3492,6 +3585,7 @@
             btnFaltas.className = inactiveClass;
             btnAgenda.className = inactiveClass;
             btnAsignaturas.className = inactiveClass;
+            if (btnNotas) btnNotas.className = inactiveClass;
 
             if (tab === 'home') {
                 if (dashboard) dashboard.classList.remove('hidden');
@@ -3516,8 +3610,181 @@
                 secAsignaturas.classList.remove('hidden');
                 btnAsignaturas.className = activeClass;
                 renderAsignaturasTab();
+            } else if (tab === 'notas') {
+                if (secNotas) secNotas.classList.remove('hidden');
+                if (btnNotas) btnNotas.className = activeClass;
+                renderNotes();
             }
+            const mobileMap = {home:'mobileNavHome',schedule:'mobileNavSchedule',agenda:'mobileNavAgenda',faltas:'mobileNavFaltas',asignaturas:'mobileNavAsignaturas',notas:'mobileNavNotas'};
+            document.querySelectorAll('#mobileBottomNav button').forEach(b=>b.classList.remove('active'));
+            const mobileActive = document.getElementById(mobileMap[tab] || '');
+            if (mobileActive) mobileActive.classList.add('active');
         }
+
+        // Notas personales: se guardan por usuario y dispositivo, separadas de los datos compartidos de clase.
+        function notesStorageKey() {
+            const uid = window.currentFirebaseUser?.uid || 'local';
+            return 'attendance_personal_notes_' + uid;
+        }
+        function getPersonalNotes() {
+            try { return JSON.parse(localStorage.getItem(notesStorageKey()) || '[]'); } catch(e) { return []; }
+        }
+        function savePersonalNotes(notes) {
+            localStorage.setItem(notesStorageKey(), JSON.stringify(notes));
+        }
+        function getPastAgendaExams() {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return (window.appData?.agendaTasks || [])
+                .filter(task => task.type === 'exam' && task.dueDate && new Date(task.dueDate + 'T00:00:00') < today)
+                .sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)));
+        }
+        function refreshNoteExamOptions(selectedId = '') {
+            const examSelect = document.getElementById('noteExam');
+            if (!examSelect) return;
+            const exams = getPastAgendaExams();
+            examSelect.innerHTML = '<option value="">Elegir un examen que ya has hecho…</option>' +
+                exams.map(exam => {
+                    const subjectName = exam.subjectName || (window.appData?.subjects || []).find(sub => String(sub.id) === String(exam.subjectId))?.name || 'Sin asignatura';
+                    const date = exam.dueDate ? new Date(exam.dueDate + 'T00:00:00').toLocaleDateString('es-ES') : '';
+                    const label = `${exam.title || 'Examen'} · ${subjectName}${date ? ' · ' + date : ''}`;
+                    return `<option value="${escapeHtml(String(exam.id))}">${escapeHtml(label)}</option>`;
+                }).join('');
+            examSelect.value = exams.some(exam => String(exam.id) === String(selectedId)) ? String(selectedId) : '';
+        }
+        function formatGrade(value) {
+            if (value === '' || value == null) return '';
+            return String(value).replace('.', ',');
+        }
+        function renderGradesOverview() {
+            const container = document.getElementById('gradesBySubject');
+            if (!container) return;
+            const grades = getPersonalNotes().filter(n => n.type === 'grade' && n.grade !== '' && n.grade != null);
+            const subjects = Array.isArray(window.appData?.subjects) ? window.appData.subjects : [];
+            const groups = new Map();
+            grades.forEach(g => {
+                const subject = subjects.find(sub => String(sub.id) === String(g.subjectId));
+                const key = g.subjectId ? String(g.subjectId) : '__none__';
+                if (!groups.has(key)) groups.set(key, {name: subject?.name || (g.subjectId ? 'Asignatura' : 'Sin asignatura'), grades: []});
+                groups.get(key).grades.push(g);
+            });
+            const entries = Array.from(groups.values()).sort((a,b) => a.name.localeCompare(b.name, 'es'));
+            container.innerHTML = entries.map(group => {
+                const nums = group.grades.map(g => Number(String(g.grade).replace(',', '.'))).filter(Number.isFinite);
+                const avg = nums.length ? nums.reduce((a,b)=>a+b,0)/nums.length : 0;
+                const rows = group.grades.slice().sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0)).map(g => `<div class="flex items-center justify-between gap-3 py-2 border-t border-indigo-100 dark:border-indigo-900/60"><div class="min-w-0"><p class="text-sm font-semibold break-words">${escapeHtml(g.title || 'Examen')}</p><p class="text-xs text-slate-500">${escapeHtml(g.date || '')}</p></div><span class="shrink-0 rounded-lg bg-white dark:bg-slate-800 px-2.5 py-1 font-extrabold text-indigo-700 dark:text-indigo-300">${escapeHtml(formatGrade(g.grade))}/10</span></div>`).join('');
+                return `<article class="rounded-xl border border-indigo-100 dark:border-indigo-900/70 bg-white dark:bg-slate-900/70 p-4"><div class="flex items-start justify-between gap-3 mb-2"><h4 class="font-extrabold break-words">${escapeHtml(group.name)}</h4><div class="text-right shrink-0"><p class="text-xs text-slate-500">Media</p><p class="text-xl font-black text-indigo-600 dark:text-indigo-300">${avg.toFixed(3).replace(/\.?0+$/,'').replace('.', ',')}<span class="text-xs font-semibold">/10</span></p></div></div><p class="text-xs text-slate-500 mb-2">${group.grades.length} ${group.grades.length===1?'examen':'exámenes'}</p>${rows}</article>`;
+            }).join('');
+            const count = document.getElementById('gradesOverviewCount');
+            const empty = document.getElementById('gradesOverviewEmpty');
+            if (count) count.textContent = `${grades.length} ${grades.length===1?'examen':'exámenes'}`;
+            if (empty) empty.classList.toggle('hidden', grades.length > 0);
+        }
+        function renderNotes() {
+            renderGradesOverview();
+            const subjectSelect = document.getElementById('noteSubject');
+            if (subjectSelect) {
+                const oldValue = subjectSelect.value;
+                subjectSelect.innerHTML = '<option value="">Sin asignatura</option>' +
+                    (window.appData?.subjects || []).map(sub => `<option value="${escapeHtml(String(sub.id))}">${escapeHtml(sub.name || 'Asignatura')}</option>`).join('');
+                if ((window.appData?.subjects || []).some(sub => String(sub.id) === oldValue)) subjectSelect.value = oldValue;
+            }
+            const filter = document.getElementById('notesFilter')?.value || 'all';
+            const list = document.getElementById('notesList');
+            const empty = document.getElementById('notesEmpty');
+            if (!list) return;
+            const notes = getPersonalNotes().filter(n => filter === 'all' || n.type === filter).sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0));
+            list.innerHTML = notes.map(n => {
+                const grade = n.type === 'grade';
+                const subject = (window.appData?.subjects || []).find(sub => String(sub.id) === String(n.subjectId));
+                return `<article class="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 flex gap-3 items-start">
+                  <div class="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center ${grade?'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300':'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300'}"><i class="fa-solid ${grade?'fa-graduation-cap':'fa-note-sticky'}"></i></div>
+                  <div class="min-w-0 flex-1"><div class="flex flex-wrap gap-2 items-center"><h4 class="font-bold break-words">${escapeHtml(n.title || 'Sin título')}</h4>${grade && n.grade !== '' && n.grade != null ? `<span class="rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 px-2 py-1 text-xs font-extrabold">${escapeHtml(formatGrade(n.grade))}/10</span>`:''}</div>
+                  <p class="text-xs text-slate-500 mt-1">${grade?'Calificación':'Apunte'}${subject?' · '+escapeHtml(subject.name):''}${n.date?' · '+escapeHtml(n.date):''}</p>
+                  ${n.body?`<p class="text-sm mt-2 whitespace-pre-wrap break-words">${escapeHtml(n.body)}</p>`:''}
+                  <div class="flex gap-2 mt-3"><button onclick="editNote('${n.id}')" class="text-xs font-bold text-blue-600 dark:text-blue-300 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30"><i class="fa-solid fa-pen mr-1"></i>Editar</button><button onclick="deleteNote('${n.id}')" class="text-xs font-bold text-rose-600 px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-900/20"><i class="fa-solid fa-trash mr-1"></i>Eliminar</button></div></div>
+                </article>`;
+            }).join('');
+            if (empty) empty.classList.toggle('hidden', notes.length > 0);
+        }
+        window.resetNoteForm = function() {
+            document.getElementById('notesForm')?.reset();
+            document.getElementById('noteEditId').value = '';
+            document.getElementById('noteGradeWrap').classList.add('hidden');
+            document.getElementById('noteExamWrap').classList.add('hidden');
+            document.getElementById('noteGrade').required = false;
+            document.getElementById('noteExam').value = '';
+            document.getElementById('noteSubmitBtn').innerHTML = '<i class="fa-solid fa-plus mr-2"></i>Guardar';
+        }
+        window.editNote = function(id) {
+            const n = getPersonalNotes().find(item => item.id === id);
+            if (!n) return;
+            document.getElementById('noteEditId').value = n.id;
+            document.getElementById('noteType').value = n.type || 'note';
+            document.getElementById('noteType').dispatchEvent(new Event('change'));
+            renderNotes();
+            document.getElementById('noteSubject').value = n.subjectId || '';
+            document.getElementById('noteTitle').value = n.title || '';
+            document.getElementById('noteGrade').value = n.grade == null ? '' : String(n.grade).replace('.', ',');
+            refreshNoteExamOptions(n.examId || '');
+            document.getElementById('noteExam').value = n.examId || '';
+            document.getElementById('noteBody').value = n.body || '';
+            document.getElementById('noteSubmitBtn').innerHTML = '<i class="fa-solid fa-floppy-disk mr-2"></i>Guardar cambios';
+            document.getElementById('notesForm').scrollIntoView({behavior:'smooth',block:'start'});
+        }
+        window.deleteNote = function(id) {
+            if (!confirm('¿Quieres eliminar esta nota?')) return;
+            savePersonalNotes(getPersonalNotes().filter(n => n.id !== id));
+            renderNotes();
+            if (window.showToast) showToast('Nota eliminada', 'info');
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const type = document.getElementById('noteType');
+            const gradeWrap = document.getElementById('noteGradeWrap');
+            const gradeInput = document.getElementById('noteGrade');
+            type?.addEventListener('change', () => {
+                const isGrade = type.value === 'grade';
+                gradeWrap?.classList.toggle('hidden', !isGrade);
+                document.getElementById('noteExamWrap')?.classList.toggle('hidden', !isGrade);
+                if (gradeInput) gradeInput.required = isGrade;
+                if (isGrade) refreshNoteExamOptions(document.getElementById('noteExam')?.value || '');
+            });
+            document.getElementById('noteExam')?.addEventListener('change', () => {
+                const examId = document.getElementById('noteExam').value;
+                const exam = getPastAgendaExams().find(item => String(item.id) === String(examId));
+                if (!exam) return;
+                const titleInput = document.getElementById('noteTitle');
+                if (titleInput) titleInput.value = exam.title || 'Examen';
+                const subjectSelect = document.getElementById('noteSubject');
+                if (subjectSelect) {
+                    renderNotes();
+                    subjectSelect.value = String(exam.subjectId || '');
+                }
+            });
+            document.getElementById('notesForm')?.addEventListener('submit', e => {
+                e.preventDefault();
+                const title = document.getElementById('noteTitle').value.trim();
+                const typeValue = type.value;
+                const rawGradeValue = document.getElementById('noteGrade').value.trim().replace(',', '.');
+                const gradeValue = rawGradeValue;
+                if (!title) return;
+                if (typeValue === 'grade') {
+                    const validFormat = /^(?:10(?:\.0{1,3})?|[0-9](?:\.[0-9]{1,3})?)$/.test(rawGradeValue);
+                    if (!validFormat || rawGradeValue === '' || Number(rawGradeValue) < 0 || Number(rawGradeValue) > 10) {
+                        showToast('Introduce una calificación entre 0 y 10, con un máximo de 3 decimales (ej. 8,375).', 'warning'); return;
+                    }
+                }
+                const notes = getPersonalNotes();
+                const editId = document.getElementById('noteEditId').value;
+                const previous = notes.find(n => n.id === editId);
+                const examId = typeValue === 'grade' ? document.getElementById('noteExam').value : '';
+                const selectedExam = examId ? getPastAgendaExams().find(exam => String(exam.id) === String(examId)) : null;
+                const item = {id: editId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),type:typeValue,examId:examId || '',subjectId:selectedExam?.subjectId || document.getElementById('noteSubject').value,title,grade:typeValue==='grade'?gradeValue:'',body:document.getElementById('noteBody').value.trim(),date:new Date().toLocaleDateString('es-ES'),createdAt:previous?.createdAt || Date.now(),updatedAt:Date.now()};
+                savePersonalNotes(editId ? notes.map(n=>n.id===editId?item:n) : [item,...notes]);
+                resetNoteForm(); renderNotes();
+                showToast(editId ? 'Nota actualizada' : 'Nota guardada', 'success');
+            });
+        });
 
         function renderAsignaturasTab() {
             const container = document.getElementById('subjectsTabContainer');
@@ -6019,6 +6286,16 @@ function updatePermissionUI(){
 }
 const _updateClassVisualsOriginal=updateClassVisuals; updateClassVisuals=function(...args){const r=_updateClassVisualsOriginal(...args);setTimeout(updatePermissionUI,0);return r;};
 </script>
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('#main-tabs-nav button, #mobileBottomNav button').forEach(function(btn){
+    btn.addEventListener('touchstart', function(){ btn.classList.add('tab-pressed'); }, {passive:true});
+    btn.addEventListener('touchend', function(){ setTimeout(()=>btn.classList.remove('tab-pressed'),220); }, {passive:true});
+    btn.addEventListener('touchcancel', function(){ btn.classList.remove('tab-pressed'); }, {passive:true});
+  });
+});
+</script>
+
 </body>
 
 </html>
