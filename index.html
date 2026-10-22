@@ -1190,39 +1190,42 @@
     /* Reserva espacio al final para la barra fija, sin crear huecos grandes entre secciones. */
     #main-content{padding-bottom:115px !important; flex-grow:0 !important}
     #proximas-clases-section{padding-bottom:24px !important}
-    #mobileBottomNav{display:flex;position:fixed;left:10px;right:10px;bottom:10px;z-index:85;gap:6px;padding:7px;background:rgba(255,255,255,.94);backdrop-filter:blur(16px);border:1px solid rgba(226,232,240,.9);border-radius:20px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
-    .dark #mobileBottomNav{background:rgba(15,23,42,.94);border-color:rgba(71,85,105,.7)}
-    #mobileBottomNav button{
-      flex:1;
+    #mobileBottomNav{display:flex;position:fixed;left:12px;right:12px;bottom:12px;z-index:85;gap:4px;padding:6px;background:rgba(255,255,255,.96);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.9);border-radius:22px;box-shadow:0 12px 35px rgba(15,23,42,.16)}
+    .dark #mobileBottomNav{background:rgba(15,23,42,.96);border-color:rgba(71,85,105,.7)}
+    #mobileBottomNav > button{
+      flex:1 1 0;
       min-width:0;
-      width:100%;
-      height:54px !important;
-      min-height:54px !important;
-      max-height:54px !important;
+      width:20%;
+      height:52px !important;
+      min-height:52px !important;
+      max-height:52px !important;
       box-sizing:border-box;
-      padding:7px 5px !important;
-      border-radius:14px;
+      padding:6px 2px !important;
+      border-radius:15px;
       font-size:10px;
-      font-weight:800;
+      font-weight:750;
       line-height:1.1;
       color:#64748b;
       display:flex;
       flex-direction:column;
       align-items:center;
       justify-content:center;
-      gap:3px;
-      transition:.2s;
+      gap:4px;
+      transition:background-color .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease;
     }
-    .dark #mobileBottomNav button{color:#94a3b8}
-    #mobileBottomNav button.active{
-      height:54px !important;
-      min-height:54px !important;
-      max-height:54px !important;
-      padding:7px 5px !important;
-      background:#2563eb;
-      color:white;
+    .dark #mobileBottomNav > button{color:#94a3b8}
+    #mobileBottomNav > button.active{
+      height:52px !important;min-height:52px !important;max-height:52px !important;
+      padding:6px 2px !important;background:#2563eb;color:white;
       box-shadow:0 5px 14px rgba(37,99,235,.25);
     }
+    #mobileBottomNav .mobile-more-menu{position:absolute;right:0;bottom:calc(100% + 10px);width:min(270px,calc(100vw - 24px));grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:8px;background:rgba(255,255,255,.98);backdrop-filter:blur(18px);border:1px solid rgba(226,232,240,.95);border-radius:18px;box-shadow:0 12px 35px rgba(15,23,42,.2)}
+    #mobileBottomNav .mobile-more-menu:not(.hidden){display:grid!important}
+    #mobileBottomNav .mobile-more-menu.hidden{display:none!important}
+    .dark #mobileBottomNav .mobile-more-menu{background:rgba(15,23,42,.98);border-color:rgba(71,85,105,.8)}
+    #mobileBottomNav .mobile-more-menu button{width:100%;min-width:0;height:64px!important;min-height:64px!important;max-height:64px!important;padding:7px 3px!important;border-radius:12px;font-size:10px;font-weight:750;line-height:1.15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:#64748b}
+    .dark #mobileBottomNav .mobile-more-menu button{color:#94a3b8}
+    #mobileBottomNav .mobile-more-menu button.active{background:#2563eb!important;color:#fff!important;box-shadow:0 5px 14px rgba(37,99,235,.25)}
     /* En móvil el selector flotante se conserva solo para reutilizar su menú; se oculta su botón azul. */
     #dataModeSwitcher{bottom:92px !important;right:16px !important;z-index:100 !important}
     #dataModeButton{display:none !important}
@@ -1279,8 +1282,8 @@
    -webkit-tap-highlight-color: transparent;
    transition: background-color .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease !important;
  }
- #mobileBottomNav button:active, #main-tabs-nav button:active{transform:scale(.94)}
- #main-tabs-nav button.tab-pressed, #mobileBottomNav button.tab-pressed{
+ #mobileBottomNav button:active, #main-tabs-nav button:active{transform:scale(.96)}
+ #main-tabs-nav button.tab-pressed, #mobileBottomNav button.tab-pressed, #mobileBottomNav .mobile-more-menu button.tab-pressed{
    background:#2563eb !important;color:#fff !important;
    box-shadow:0 5px 14px rgba(37,99,235,.28) !important;
  }
@@ -1398,12 +1401,15 @@
     </div>
     <nav id="mobileBottomNav" aria-label="Navegación principal móvil">
         <button id="mobileNavHome" onclick="goToDashboard()"><i class="fa-solid fa-house text-base"></i><span>Inicio</span></button>
-        <button id="mobileNavSchedule" onclick="switchMainTab('schedule')"><i class="fa-solid fa-calendar-days text-base"></i><span>Horario</span></button>
-        <button id="mobileNavAgenda" onclick="switchMainTab('agenda')"><i class="fa-solid fa-book-bookmark text-base"></i><span>Agenda</span></button>
-        <button id="mobileNavFaltas" onclick="switchMainTab('faltas')"><i class="fa-solid fa-user-xmark text-base"></i><span>Faltas</span></button>
-        <button id="mobileNavAsignaturas" onclick="switchMainTab('asignaturas')"><i class="fa-solid fa-book-open text-base"></i><span>Asignaturas</span></button>
-        <button id="mobileNavClass" onclick="handleMobileClassButton(event)"><i class="fa-solid fa-users text-base"></i><span>Clase</span></button>
-        <button id="mobileNavNotas" onclick="switchMainTab('notas')"><i class="fa-solid fa-note-sticky text-base"></i><span>Notas</span></button>
+        <button id="mobileNavSchedule" onclick="switchMainTab('schedule');closeMobileMoreMenu()"><i class="fa-solid fa-calendar-days text-base"></i><span>Horario</span></button>
+        <button id="mobileNavAgenda" onclick="switchMainTab('agenda');closeMobileMoreMenu()"><i class="fa-solid fa-book-bookmark text-base"></i><span>Agenda</span></button>
+        <button id="mobileNavFaltas" onclick="switchMainTab('faltas');closeMobileMoreMenu()"><i class="fa-solid fa-user-xmark text-base"></i><span>Faltas</span></button>
+        <button id="mobileNavMore" onclick="toggleMobileMoreMenu()" aria-expanded="false" aria-controls="mobileMoreMenu"><i class="fa-solid fa-ellipsis text-lg"></i><span>Más</span></button>
+        <div id="mobileMoreMenu" class="mobile-more-menu hidden" aria-label="Más secciones">
+            <button id="mobileNavAsignaturas" onclick="switchMainTab('asignaturas');closeMobileMoreMenu()"><i class="fa-solid fa-book-open text-base"></i><span>Asignaturas</span></button>
+            <button id="mobileNavClass" onclick="handleMobileClassButton(event);closeMobileMoreMenu()"><i class="fa-solid fa-users text-base"></i><span>Clase</span></button>
+            <button id="mobileNavNotas" onclick="switchMainTab('notas');closeMobileMoreMenu()"><i class="fa-solid fa-note-sticky text-base"></i><span>Notas</span></button>
+        </div>
     </nav>
     <!-- Selector Local / Clase: botón flotante abajo a la derecha -->
     <div id="dataModeSwitcher" class="hidden fixed bottom-5 right-5 z-[80] rounded-3xl">
@@ -3624,6 +3630,9 @@
             document.querySelectorAll('#mobileBottomNav button').forEach(b=>b.classList.remove('active'));
             const mobileActive = document.getElementById(mobileMap[tab] || '');
             if (mobileActive) mobileActive.classList.add('active');
+            const moreButton = document.getElementById('mobileNavMore');
+            if (moreButton) moreButton.classList.toggle('active', ['asignaturas','notas'].includes(tab));
+            closeMobileMoreMenu();
         }
 
         // Notas personales: se guardan por usuario y dispositivo, separadas de los datos compartidos de clase.
@@ -5797,7 +5806,23 @@ window.submitSuggestion = async function(e){
 function isSharedOwner(){ return !!(window.activeDataMode==='shared' && window.activeClassId && window.currentFirebaseUser && window.activeClassOwnerUid===window.currentFirebaseUser.uid); }
 function isSharedStudent(){ return window.activeDataMode==='shared' && !!window.activeClassId && !isSharedOwner(); }
 function updateMobileThemeIcon(){ if(typeof updateHeaderThemeMenuOption==='function') updateHeaderThemeMenuOption(); }
-function updateMobileNav(){ ['home','schedule','agenda','faltas','asignaturas'].forEach(t=>{const b=document.getElementById('mobileNav'+t.charAt(0).toUpperCase()+t.slice(1)); if(b)b.classList.toggle('active',t==='home' ? false : currentMainTab===t);}); updateMobileThemeIcon(); }
+function toggleMobileMoreMenu(){
+  const menu=document.getElementById('mobileMoreMenu');
+  const button=document.getElementById('mobileNavMore');
+  if(!menu||!button)return;
+  const opening=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden',!opening);
+  button.setAttribute('aria-expanded',String(opening));
+  if(opening) button.classList.add('active');
+  else if(!['asignaturas','notas'].includes(currentMainTab)) button.classList.remove('active');
+}
+function closeMobileMoreMenu(){
+  const menu=document.getElementById('mobileMoreMenu');
+  const button=document.getElementById('mobileNavMore');
+  if(menu)menu.classList.add('hidden');
+  if(button){button.setAttribute('aria-expanded','false');button.classList.toggle('active',['asignaturas','notas'].includes(currentMainTab));}
+}
+function updateMobileNav(){ ['home','schedule','agenda','faltas','asignaturas','notas'].forEach(t=>{const b=document.getElementById('mobileNav'+t.charAt(0).toUpperCase()+t.slice(1)); if(b)b.classList.toggle('active',currentMainTab===t);}); const more=document.getElementById('mobileNavMore'); if(more)more.classList.toggle('active',['asignaturas','notas'].includes(currentMainTab)); updateMobileThemeIcon(); }
 function handleMobileClassButton(event){
   // El botón Clase de la barra inferior reutiliza el mismo menú de cambio de modo.
   // Evitamos que el listener global de clic lo cierre inmediatamente.
@@ -5810,7 +5835,7 @@ function handleMobileClassButton(event){
   updateModeSwitcherUI();
   toggleDataModeMenu();
 }
-function goToDashboard(){ switchMainTab('home'); const el=document.getElementById('dashboardSection'); if(el){ setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),0); } document.querySelectorAll('#mobileBottomNav button').forEach(b=>b.classList.remove('active')); document.getElementById('mobileNavHome')?.classList.add('active'); }
+function goToDashboard(){ closeMobileMoreMenu(); switchMainTab('home'); const el=document.getElementById('dashboardSection'); if(el){ setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),0); } document.querySelectorAll('#mobileBottomNav button').forEach(b=>b.classList.remove('active')); document.getElementById('mobileNavHome')?.classList.add('active'); }
 
 function renderDailyJoke(){
  const jokes=[
