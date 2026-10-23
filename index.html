@@ -389,6 +389,29 @@
         }
         .agenda-card-details { display:none !important; }
         #agendaDetailsModal .agenda-detail-value { overflow-wrap:anywhere; word-break:break-word; white-space:pre-wrap; }
+
+        /* Calendario mensual de agenda */
+        #agendaCalendarGrid .agenda-calendar-day {
+            min-height: 76px; padding: 7px 3px; border-radius: 13px;
+            border: 1px solid #e2e8f0; background: #fff; text-align: center;
+            color: #334155; transition: background .15s, border-color .15s, transform .15s;
+        }
+        #agendaCalendarGrid .agenda-calendar-day:hover { border-color:#93c5fd; background:#eff6ff; }
+        #agendaCalendarGrid .agenda-calendar-day.selected { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.15); background:#eff6ff; }
+        #agendaCalendarGrid .agenda-calendar-day.today .agenda-calendar-number { background:#2563eb;color:#fff; }
+        #agendaCalendarGrid .agenda-calendar-day.other-month { opacity:.38; }
+        #agendaCalendarGrid .agenda-calendar-number { display:flex;align-items:center;justify-content:center;width:27px;height:27px;margin:0 auto 5px;border-radius:9px;font-size:12px;font-weight:800; }
+        #agendaCalendarGrid .agenda-calendar-dots { display:flex;justify-content:center;gap:3px;min-height:7px; }
+        #agendaCalendarGrid .agenda-calendar-dot { width:6px;height:6px;border-radius:50%;display:inline-block; }
+        .dark #agendaCalendarGrid .agenda-calendar-day { background:#1e293b;border-color:#334155;color:#e2e8f0; }
+        .dark #agendaCalendarGrid .agenda-calendar-day:hover,.dark #agendaCalendarGrid .agenda-calendar-day.selected { background:#172554;border-color:#3b82f6; }
+        @media(max-width:640px) {
+            #agendaMonthlyCalendar { padding:12px; }
+            #agendaCalendarGrid .agenda-calendar-day { min-height:57px;padding:4px 1px;border-radius:9px; }
+            #agendaCalendarGrid .agenda-calendar-number { width:23px;height:23px;font-size:11px;margin-bottom:4px; }
+            #agendaCalendarGrid .agenda-calendar-dot { width:5px;height:5px; }
+        }
+
 </style>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
@@ -2224,6 +2247,35 @@
                     <span>Añadir Examen / Deber</span>
                 </button>
             </div>
+
+
+            <!-- CALENDARIO MENSUAL DE TAREAS Y EXÁMENES -->
+            <section id="agendaMonthlyCalendar" class="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 sm:p-6 shadow-sm">
+                <div class="flex items-center justify-between gap-3 mb-5">
+                    <div>
+                        <h3 class="text-lg font-extrabold"><i class="fa-solid fa-calendar-days text-blue-600 mr-2"></i>Calendario mensual</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Consulta los exámenes y las tareas de cada día.</p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button type="button" onclick="changeAgendaMonth(-1)" aria-label="Mes anterior" class="w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fa-solid fa-chevron-left"></i></button>
+                        <button type="button" onclick="goToAgendaToday()" class="px-3 h-9 rounded-xl text-xs font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Hoy</button>
+                        <button type="button" onclick="changeAgendaMonth(1)" aria-label="Mes siguiente" class="w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                </div>
+                <div id="agendaCalendarMonthLabel" class="text-center text-base font-extrabold mb-4 capitalize"></div>
+                <div class="grid grid-cols-7 gap-1 sm:gap-2 mb-2 text-center text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <div>Lun</div><div>Mar</div><div>Mié</div><div>Jue</div><div>Vie</div><div>Sáb</div><div>Dom</div>
+                </div>
+                <div id="agendaCalendarGrid" class="grid grid-cols-7 gap-1 sm:gap-2"></div>
+                <div class="flex flex-wrap gap-4 mt-4 text-[11px] text-slate-600 dark:text-slate-300">
+                    <span class="inline-flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>Examen</span>
+                    <span class="inline-flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>Tarea / deber</span>
+                    <span class="inline-flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>Completado</span>
+                </div>
+                <div id="agendaCalendarDayEvents" class="mt-5 pt-4 border-t border-slate-200 dark:border-slate-700">
+                    <p class="text-sm text-slate-500 dark:text-slate-400">Selecciona un día para ver sus tareas y exámenes.</p>
+                </div>
+            </section>
 
             <!-- Filtros de la Agenda -->
             <div class="flex space-x-2 border-b border-slate-200 dark:border-slate-700 pb-2">
@@ -4593,6 +4645,7 @@
             const emptyState = document.getElementById('emptyState');
 
             if (!container) return;
+            window.renderAgendaCalendar?.();
             container.innerHTML = '';
 
             const subjects = window.appData.subjects || [];
@@ -4940,6 +4993,124 @@
 
             renderAgendaList();
         }
+
+
+        // Calendario mensual de tareas y exámenes de la agenda.
+        let agendaCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        let agendaCalendarSelectedDate = formatDateKey(new Date());
+
+        window.changeAgendaMonth = function(delta) {
+            agendaCalendarMonth = new Date(agendaCalendarMonth.getFullYear(), agendaCalendarMonth.getMonth() + delta, 1);
+            renderAgendaCalendar();
+        };
+        window.goToAgendaToday = function() {
+            const now = new Date();
+            agendaCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            agendaCalendarSelectedDate = formatDateKey(now);
+            renderAgendaCalendar();
+        };
+
+        function getAgendaCalendarTasks() {
+            const hidden = new Set(window.classPersonalAttendance?.hiddenAgendaIds || []);
+            const deleted = window.deletedSharedAgendaIds instanceof Set ? window.deletedSharedAgendaIds : new Set();
+            const shared = !!(window.activeClassId && window.activeDataMode === 'shared');
+            return (window.appData?.agendaTasks || []).filter(task => {
+                if (!task || !task.dueDate || hidden.has(task.id) || deleted.has(task.id)) return false;
+                if (shared) {
+                    const subject = (window.appData.subjects || []).find(item => item.id === task.subjectId);
+                    if (!subject || !isSubjectEnrolled(subject)) return false;
+                }
+                return true;
+            });
+        }
+
+        window.renderAgendaCalendar = function() {
+            const grid = document.getElementById('agendaCalendarGrid');
+            const label = document.getElementById('agendaCalendarMonthLabel');
+            const dayEvents = document.getElementById('agendaCalendarDayEvents');
+            if (!grid || !label || !dayEvents) return;
+
+            const year = agendaCalendarMonth.getFullYear();
+            const month = agendaCalendarMonth.getMonth();
+            label.textContent = agendaCalendarMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+            const tasks = getAgendaCalendarTasks();
+            const firstDay = new Date(year, month, 1);
+            const offset = (firstDay.getDay() + 6) % 7;
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const previousMonthDays = new Date(year, month, 0).getDate();
+            const todayKey = formatDateKey(new Date());
+            let html = '';
+
+            for (let cell = 0; cell < 42; cell++) {
+                let date, inMonth = true;
+                if (cell < offset) {
+                    date = new Date(year, month - 1, previousMonthDays - offset + cell + 1);
+                    inMonth = false;
+                } else if (cell >= offset + daysInMonth) {
+                    date = new Date(year, month + 1, cell - offset - daysInMonth + 1);
+                    inMonth = false;
+                } else {
+                    date = new Date(year, month, cell - offset + 1);
+                }
+                const key = formatDateKey(date);
+                const events = tasks.filter(task => task.dueDate === key);
+                const hasExam = events.some(task => task.type === 'exam');
+                const hasHomework = events.some(task => task.type !== 'exam');
+                const hasCompleted = events.some(task => task.completed);
+                const classes = ['agenda-calendar-day'];
+                if (!inMonth) classes.push('other-month');
+                if (key === todayKey) classes.push('today');
+                if (key === agendaCalendarSelectedDate) classes.push('selected');
+                const dots = [
+                    hasExam ? '<span class="agenda-calendar-dot bg-rose-500"></span>' : '',
+                    hasHomework ? '<span class="agenda-calendar-dot bg-amber-500"></span>' : '',
+                    hasCompleted ? '<span class="agenda-calendar-dot bg-emerald-500"></span>' : ''
+                ].join('');
+                html += `<button type="button" class="${classes.join(' ')}" onclick="selectAgendaCalendarDate('${key}')" aria-label="${date.toLocaleDateString('es-ES')} - ${events.length} eventos">
+                    <span class="agenda-calendar-number">${date.getDate()}</span>
+                    <span class="agenda-calendar-dots">${dots}</span>
+                    ${events.length ? `<span class="block text-[9px] sm:text-[10px] font-bold mt-1">${events.length} ${events.length === 1 ? 'evento' : 'eventos'}</span>` : '<span class="block text-[9px] mt-1 opacity-0">0 eventos</span>'}
+                </button>`;
+            }
+            grid.innerHTML = html;
+            renderAgendaCalendarDay();
+        };
+
+        window.selectAgendaCalendarDate = function(dateKey) {
+            agendaCalendarSelectedDate = dateKey;
+            const date = new Date(dateKey + 'T00:00:00');
+            if (date.getMonth() !== agendaCalendarMonth.getMonth() || date.getFullYear() !== agendaCalendarMonth.getFullYear()) {
+                agendaCalendarMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+            }
+            renderAgendaCalendar();
+        };
+
+        function renderAgendaCalendarDay() {
+            const dayEvents = document.getElementById('agendaCalendarDayEvents');
+            if (!dayEvents) return;
+            const tasks = getAgendaCalendarTasks()
+                .filter(task => task.dueDate === agendaCalendarSelectedDate)
+                .sort((a, b) => (a.type === 'exam' ? -1 : 1) - (b.type === 'exam' ? -1 : 1));
+            const dateLabel = new Date(agendaCalendarSelectedDate + 'T00:00:00').toLocaleDateString('es-ES', {
+                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+            });
+            if (!tasks.length) {
+                dayEvents.innerHTML = `<h4 class="font-bold text-sm capitalize mb-2">${dateLabel}</h4><p class="text-sm text-slate-500 dark:text-slate-400">No hay tareas ni exámenes para este día.</p>`;
+                return;
+            }
+            dayEvents.innerHTML = `<h4 class="font-bold text-sm capitalize mb-3">${dateLabel} <span class="text-slate-400 font-medium">· ${tasks.length} ${tasks.length === 1 ? 'evento' : 'eventos'}</span></h4>` +
+                tasks.map(task => {
+                    const exam = task.type === 'exam';
+                    const color = exam ? 'rose' : 'amber';
+                    return `<div class="flex items-start gap-3 p-3 mb-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40">
+                        <span class="mt-0.5 w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${exam ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300' : 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300'}"><i class="fa-solid ${exam ? 'fa-file-pen' : 'fa-book'}"></i></span>
+                        <div class="min-w-0 flex-1"><div class="font-bold text-sm break-words ${task.completed ? 'line-through opacity-60' : ''}">${escapeHtml(task.title || (exam ? 'Examen' : 'Tarea'))}</div>
+                        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">${escapeHtml(task.subjectName || 'Sin asignatura')} · ${exam ? 'Examen' : 'Tarea / deber'}${task.completed ? ' · Completado' : ''}</div>
+                        ${task.description ? `<p class="text-xs mt-2 whitespace-pre-wrap break-words text-slate-600 dark:text-slate-300">${escapeHtml(task.description)}</p>` : ''}</div>
+                    </div>`;
+                }).join('');
+        }
+
 
         function renderAgendaList() {
             const container = document.getElementById('agendaItemsContainer');
