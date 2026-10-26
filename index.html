@@ -3,6 +3,26 @@
 
 <head>
     <meta charset="UTF-8">
+
+    <!-- Mensaje simpático para quien abra las herramientas de desarrollador -->
+    <script>
+        console.log(String.raw`
+   ___________________________
+  |  CONTROL DE FALTAS       |
+  |--------------------------|
+  |  📚  deberes: muchos     |
+  |  ☕  café: necesario     |
+  |  😎  actitud: impecable  |
+  |__________________________|
+        \  ^__^
+         \ (oo)\_______
+           (__)\       )\/\
+               ||----w |
+               ||     ||
+`);
+        console.log('%c¡Hola, persona curiosa! 👀', 'color: #2563eb; font-size: 18px; font-weight: bold;');
+        console.log('%cHas abierto Inspeccionar. Tranquilo: aquí no hay faltas que justificar... solo código. 😉', 'color: #64748b; font-size: 12px;');
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control de Faltas y Agenda</title>
 
@@ -1364,6 +1384,29 @@ html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { backg
 </head>
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
+
+<!--
+  ================================================
+   CONTROL DE FALTAS - MENSAJE PARA CURIOSOS
+
+       .-=========-.
+       \   o   o   /
+        |    ^    |
+        |  \___/  |
+         \_______/
+          /|   |\
+         /_|___|_\
+
+  ¡Hola, persona curiosa! 👀
+  Has abierto el código fuente. No te preocupes:
+  aquí las únicas faltas son las que no has apuntado.
+  Y el único examen sorpresa... es entender este HTML. 😎
+
+  Consejo: si encuentras un bug, no lo mires fijamente.
+  Se pone nervioso y se esconde en la consola.
+  ================================================
+-->
+
 
     <header class="bg-white dark:bg-slate-800 border-b-0 sticky top-0 z-[70] shadow-none overflow-visible">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -4713,13 +4756,20 @@ html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { backg
             window.renderAgendaCalendar?.();
             container.innerHTML = '';
 
-            const subjects = window.appData.subjects || [];
+            // En Faltas solo mostramos asignaturas en las que el usuario está matriculado.
+            const subjects = getEnrolledSubjects();
 
             if (subjects.length === 0) {
-                if (emptyState) emptyState.classList.remove('hidden');
+                if (emptyState) {
+                    emptyState.classList.remove('hidden');
+                    emptyState.textContent = 'No estás matriculado en ninguna asignatura.';
+                }
                 return;
             } else {
-                if (emptyState) emptyState.classList.add('hidden');
+                if (emptyState) {
+                    emptyState.classList.add('hidden');
+                    emptyState.textContent = '';
+                }
             }
 
             subjects.forEach((sub, idx) => {
