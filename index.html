@@ -1314,6 +1314,53 @@
 }
 </style>
 
+
+<style id="offline-css-fallback">
+/* Estilos mínimos de respaldo para que la PWA conserve una presentación legible sin conexión. */
+html.offline-mode, html.offline-mode body { background:#f1f5f9; color:#0f172a; font-family:Inter,Arial,sans-serif; }
+html.offline-mode .hidden { display:none !important; }
+html.offline-mode header { background:#fff; border-bottom:1px solid #e2e8f0; }
+html.offline-mode button, html.offline-mode input, html.offline-mode select, html.offline-mode textarea { font:inherit; }
+html.offline-mode button { cursor:pointer; }
+html.offline-mode input, html.offline-mode select, html.offline-mode textarea { max-width:100%; border:1px solid #cbd5e1; border-radius:10px; padding:8px 10px; background:#fff; color:#0f172a; }
+html.offline-mode article, html.offline-mode .bg-white, html.offline-mode .rounded-3xl, html.offline-mode .rounded-2xl { border-radius:16px; }
+html.offline-mode .bg-white { background:#fff; }
+html.offline-mode .text-white { color:#fff; }
+html.offline-mode .bg-blue-600, html.offline-mode .bg-blue-700 { background:#2563eb; color:#fff; }
+html.offline-mode .text-blue-600 { color:#2563eb; }
+html.offline-mode .border, html.offline-mode [class*="border-slate"] { border-color:#e2e8f0; }
+html.offline-mode .shadow, html.offline-mode .shadow-sm, html.offline-mode .shadow-md { box-shadow:0 3px 12px rgba(15,23,42,.08); }
+html.offline-mode .flex { display:flex; }
+html.offline-mode .grid { display:grid; }
+html.offline-mode .items-center { align-items:center; }
+html.offline-mode .justify-between { justify-content:space-between; }
+html.offline-mode .justify-center { justify-content:center; }
+html.offline-mode .flex-col { flex-direction:column; }
+html.offline-mode .gap-2 { gap:8px; }
+html.offline-mode .gap-3 { gap:12px; }
+html.offline-mode .gap-4 { gap:16px; }
+html.offline-mode .p-4 { padding:16px; }
+html.offline-mode .p-6 { padding:24px; }
+html.offline-mode .mb-4 { margin-bottom:16px; }
+html.offline-mode .mb-6 { margin-bottom:24px; }
+html.offline-mode .w-full { width:100%; }
+html.offline-mode .text-sm { font-size:14px; }
+html.offline-mode .text-xs { font-size:12px; }
+html.offline-mode .font-bold, html.offline-mode .font-extrabold, html.offline-mode .font-black { font-weight:700; }
+html.offline-mode .rounded-xl { border-radius:12px; }
+html.offline-mode .rounded-full { border-radius:9999px; }
+html.offline-mode .dark { color:#e2e8f0; }
+html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { background:#1e293b; }
+</style>
+<script>
+(function(){
+  function updateOfflineStyles(){ document.documentElement.classList.toggle('offline-mode', !navigator.onLine); }
+  window.addEventListener('online', updateOfflineStyles);
+  window.addEventListener('offline', updateOfflineStyles);
+  updateOfflineStyles();
+})();
+</script>
+
 </head>
 
 <body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col justify-between">
@@ -2225,7 +2272,7 @@
                 </div>
             </div>
 
-            <div id="agendaEnrollmentPanel" class="hidden rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-4">
+            <div id="agendaEnrollmentPanel" style="display:none!important" class="hidden rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-4">
                 <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
                     <div>
                         <h3 class="font-bold text-sm text-slate-900 dark:text-white"><i class="fa-solid fa-book-open text-emerald-600 mr-2"></i>Mis asignaturas matriculadas</h3>
@@ -2614,6 +2661,11 @@
                         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Límite Faltas (%)</label>
                         <input type="number" id="subjectLimit" min="1" max="100" step="0.5" placeholder="Usar global" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Faltas máximas (horas)</label>
+                    <input type="number" id="subjectMaxAbsences" min="0" step="0.5" placeholder="Calcular según el porcentaje" class="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Opcional. Si lo rellenas, este límite tiene prioridad sobre el porcentaje de faltas.</p>
                 </div>
 
                 <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-700">
@@ -3751,9 +3803,11 @@
             const subjectSelect = document.getElementById('noteSubject');
             if (subjectSelect) {
                 const oldValue = subjectSelect.value;
+                const enrolledSubjects = (window.appData?.subjects || []).filter(isSubjectEnrolled);
                 subjectSelect.innerHTML = '<option value="">Sin asignatura</option>' +
-                    (window.appData?.subjects || []).map(sub => `<option value="${escapeHtml(String(sub.id))}">${escapeHtml(sub.name || 'Asignatura')}</option>`).join('');
-                if ((window.appData?.subjects || []).some(sub => String(sub.id) === oldValue)) subjectSelect.value = oldValue;
+                    enrolledSubjects.map(sub => `<option value="${escapeHtml(String(sub.id))}">${escapeHtml(sub.name || 'Asignatura')}</option>`).join('');
+                if (enrolledSubjects.some(sub => String(sub.id) === oldValue)) subjectSelect.value = oldValue;
+                else subjectSelect.value = '';
             }
             const filter = document.getElementById('notesFilter')?.value || 'all';
             const list = document.getElementById('notesList');
@@ -4010,7 +4064,7 @@
 
             getEnrolledSubjects().forEach(sub => {
                 const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
-                const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
+                const maxAbsencesAllowed = sub.maxAbsences !== null && sub.maxAbsences !== undefined && sub.maxAbsences !== '' ? Math.max(0, parseFloat(sub.maxAbsences) || 0) : (sub.totalHours * limitPct) / 100;
                 const remainingHours = maxAbsencesAllowed - (sub.absences || 0);
                 
                 if ((sub.absences || 0) >= maxAbsencesAllowed || remainingHours < 5.01) {
@@ -4400,6 +4454,7 @@
             document.getElementById('subjectName').value = '';
             document.getElementById('subjectTotalHours').value = 60;
             document.getElementById('subjectLimit').value = '';
+            document.getElementById('subjectMaxAbsences').value = '';
             document.getElementById('subjectBilingual').checked = false;
             document.getElementById('modalTitle').textContent = 'Añadir Nueva Asignatura';
             document.getElementById('subjectModal').classList.remove('hidden');
@@ -4413,6 +4468,7 @@
             document.getElementById('subjectName').value = subject.name;
             document.getElementById('subjectTotalHours').value = subject.totalHours;
             document.getElementById('subjectLimit').value = subject.customLimit !== null && subject.customLimit !== undefined ? subject.customLimit : '';
+            document.getElementById('subjectMaxAbsences').value = subject.maxAbsences !== null && subject.maxAbsences !== undefined && subject.maxAbsences !== '' ? subject.maxAbsences : '';
             document.getElementById('subjectBilingual').checked = subject.bilingual === true;
             document.getElementById('modalTitle').textContent = 'Editar Asignatura';
             document.getElementById('subjectModal').classList.remove('hidden');
@@ -4430,7 +4486,14 @@
             const totalHours = parseInt(document.getElementById('subjectTotalHours').value, 10);
             const customLimitVal = document.getElementById('subjectLimit').value;
             const customLimit = customLimitVal !== '' ? parseFloat(customLimitVal) : null;
+            const maxAbsencesVal = document.getElementById('subjectMaxAbsences').value;
+            const maxAbsences = maxAbsencesVal !== '' ? parseFloat(maxAbsencesVal) : null;
             const bilingual = document.getElementById('subjectBilingual').checked;
+
+            if (!name || !Number.isFinite(totalHours) || totalHours < 1 || (maxAbsences !== null && (!Number.isFinite(maxAbsences) || maxAbsences < 0))) {
+                showToast('Revisa las horas totales y el máximo de faltas', 'warning');
+                return;
+            }
 
             if (!window.appData.subjects) window.appData.subjects = [];
 
@@ -4453,6 +4516,7 @@
                     sub.name = name;
                     sub.totalHours = totalHours;
                     sub.customLimit = customLimit;
+                    sub.maxAbsences = maxAbsences;
                     sub.bilingual = bilingual;
                 }
                 showToast('Asignatura actualizada');
@@ -4463,6 +4527,7 @@
                     totalHours,
                     absences: 0,
                     customLimit,
+                    maxAbsences,
                     bilingual,
                     enrolled: true
                 };
@@ -4659,7 +4724,7 @@
 
             subjects.forEach((sub, idx) => {
                 const limitPct = sub.customLimit !== null && sub.customLimit !== undefined && sub.customLimit !== '' ? parseFloat(sub.customLimit) : parseFloat(window.appData.globalLimit || 15);
-                const maxAbsencesAllowed = (sub.totalHours * limitPct) / 100;
+                const maxAbsencesAllowed = sub.maxAbsences !== null && sub.maxAbsences !== undefined && sub.maxAbsences !== '' ? Math.max(0, parseFloat(sub.maxAbsences) || 0) : (sub.totalHours * limitPct) / 100;
                 const absences = isSubjectEnrolled(sub) ? (sub.absences || 0) : 0;
                 const remaining = maxAbsencesAllowed - absences;
                 const progressPct = Math.min(100, Math.max(0, (absences / maxAbsencesAllowed) * 100));
@@ -6347,7 +6412,7 @@ function renderDashboard(){
  const upcoming=tasks.filter(t=>key(t.dueDate)>=now).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
  const next7=upcoming.filter(t=>(key(t.dueDate)-now)<=7*86400000);
  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
- const name=(window.currentFirebaseUser?.displayName||document.getElementById('user-email-display')?.textContent||'Usuario').trim()||'Usuario';
+ const rawName=(window.currentFirebaseUser?.displayName||document.getElementById('user-email-display')?.textContent||'Usuario').trim()||'Usuario'; const name=rawName.charAt(0).toLocaleUpperCase('es-ES')+rawName.slice(1);
  renderDailyJoke();
  set('dashboardGreeting','¡Hola, '+name+'!'); set('dashPendingCount',tasks.length); set('dashUpcomingCount',next7.length); set('dashSubjectsCount',(window.appData.subjects||[]).filter(isSubjectEnrolled).length); set('dashAbsencesCount',(window.appData.absenceLogs||[]).length);
  const upcomingTasks=upcoming.filter(t=>t.type!=='exam');

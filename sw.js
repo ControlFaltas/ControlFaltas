@@ -1,4 +1,4 @@
-const CACHE_NAME = 'faltas-app-v2';
+const CACHE_NAME = 'faltas-app-v3';
 
 const APP_SHELL = [
     './',
@@ -6,7 +6,7 @@ const APP_SHELL = [
     './manifest.json'
 ];
 
-// Instalación del service worker
+// Instalación: guardar los archivos principales
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME)
@@ -15,14 +15,17 @@ self.addEventListener('install', (event) => {
     );
 });
 
-// Activación y eliminación de cachés antiguas
+// Activación: eliminar la caché antigua de la aplicación
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys()
             .then((cacheNames) => {
                 return Promise.all(
                     cacheNames
-                        .filter((cacheName) => cacheName !== CACHE_NAME)
+                        .filter((cacheName) =>
+                            cacheName.startsWith('faltas-app-') &&
+                            cacheName !== CACHE_NAME
+                        )
                         .map((cacheName) => caches.delete(cacheName))
                 );
             })
@@ -30,32 +33,51 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Peticiones de red
-// Intentamos siempre obtener la versión actual de Internet.
-// Si no hay conexión, utilizamos la caché.
+// Peticiones: red primero; caché si no hay conexión
 self.addEventListener('fetch', (event) => {
-    // Solo gestionamos peticiones GET
-    if (event.request.method !== 'GET') {
+    const request = event.request;
+
+    if (request.method !== 'GET') {
         return;
     }
 
     event.respondWith(
-        fetch(event.request)
+        fetch(request)
             .then((response) => {
-                // Guardamos una copia actualizada en caché
                 if (response && response.status === 200) {
                     const responseClone = response.clone();
 
                     caches.open(CACHE_NAME).then((cache) => {
-                        cache.put(event.request, responseClone);
+                        cache.put(request, responseClone).catch(() => {});
                     });
                 }
 
                 return response;
             })
-            .catch(() => {
-                // Si no hay Internet, usamos la caché
-                return caches.match(event.request);
+            .catch(async () => {
+                const cachedResponse = await caches.match(request);
+
+                if (cachedResponse) {
+                    return cachedResponse;
+                }
+
+                // Si se solicita una página y no hay conexión,
+                // mostrar el HTML guardado como alternativa.
+                if (request.mode === 'navigate') {
+                    const cachedPage = await caches.match('./index.html');
+
+                    if (cachedPage) {
+                        return cachedPage;
+                    }
+                }
+
+                return new Response('No hay conexión a Internet y este recurso no está guardado.', {
+                    status: 503,
+                    statusText: 'Sin conexión',
+                    headers: {
+                        'Content-Type': 'text/plain; charset=utf-8'
+                    }
+                });
             })
     );
 });
