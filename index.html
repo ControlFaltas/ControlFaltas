@@ -508,6 +508,8 @@
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     window.currentFirebaseUser = user;
+    if (user) window.startPersonalNotesSync?.(user.uid);
+    else window.stopPersonalNotesSync?.();
     const authContainer = document.getElementById('auth-container');
     const mainContent = document.getElementById('main-content');
     const userInfoBar = document.getElementById('user-info-bar');
@@ -3782,17 +3784,74 @@ html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { backg
             closeMobileMoreMenu();
         }
 
-        // Notas personales: se guardan por usuario y dispositivo, separadas de los datos compartidos de clase.
-        function notesStorageKey() {
-            const uid = window.currentFirebaseUser?.uid || 'local';
+        // Notas y calificaciones personales: caché local + sincronización en Firebase
+        // bajo users/{uid}/personalNotes. No se mezclan con los datos compartidos de la clase.
+        let personalNotesCloudRef = null;
+        let applyingRemotePersonalNotes = false;
+        let personalNotesSyncUid = null;
+
+        function notesStorageKey(uid = window.currentFirebaseUser?.uid || 'local') {
             return 'attendance_personal_notes_' + uid;
         }
         function getPersonalNotes() {
             try { return JSON.parse(localStorage.getItem(notesStorageKey()) || '[]'); } catch(e) { return []; }
         }
         function savePersonalNotes(notes) {
-            localStorage.setItem(notesStorageKey(), JSON.stringify(notes));
+            const safeNotes = Array.isArray(notes) ? notes : [];
+            localStorage.setItem(notesStorageKey(), JSON.stringify(safeNotes));
+            const user = window.currentFirebaseUser;
+            if (!user || applyingRemotePersonalNotes || !window.firebaseDb || !window.firebaseRef || !window.firebaseSet) return;
+            const notesRef = window.firebaseRef(window.firebaseDb, 'users/' + user.uid + '/personalNotes');
+            window.firebaseSet(notesRef, safeNotes).catch(error => {
+                console.error('No se pudieron sincronizar las notas y calificaciones con Firebase:', error);
+                if (window.showToast) window.showToast('No se pudieron sincronizar las notas. Comprueba tu conexión y las reglas de Firebase.', 'danger');
+            });
         }
+
+        window.stopPersonalNotesSync = function() {
+            if (personalNotesCloudRef && window.firebaseOff) window.firebaseOff(personalNotesCloudRef);
+            personalNotesCloudRef = null;
+            personalNotesSyncUid = null;
+        };
+
+        window.startPersonalNotesSync = function(uid) {
+            if (!uid || !window.firebaseDb || !window.firebaseRef || !window.firebaseOnValue) return;
+            if (personalNotesSyncUid === uid && personalNotesCloudRef) return;
+            window.stopPersonalNotesSync();
+            personalNotesSyncUid = uid;
+            personalNotesCloudRef = window.firebaseRef(window.firebaseDb, 'users/' + uid + '/personalNotes');
+            window.firebaseOnValue(personalNotesCloudRef, snapshot => {
+                if (personalNotesSyncUid !== uid) return;
+                if (snapshot.exists()) {
+                    const cloudNotes = snapshot.val();
+                    const normalizedNotes = Array.isArray(cloudNotes)
+                        ? cloudNotes
+                        : (cloudNotes && typeof cloudNotes === 'object' ? Object.values(cloudNotes) : []);
+                    applyingRemotePersonalNotes = true;
+                    localStorage.setItem(notesStorageKey(uid), JSON.stringify(normalizedNotes));
+                    applyingRemotePersonalNotes = false;
+                    if (window.currentFirebaseUser?.uid === uid && typeof renderNotes === 'function') {
+                        if (typeof currentMainTab === 'undefined' || currentMainTab === 'notas') renderNotes();
+                    }
+                } else {
+                    // Migra al primer inicio de sesión las notas que ya existían solo en ese dispositivo.
+                    const localNotes = (() => {
+                        try { return JSON.parse(localStorage.getItem(notesStorageKey(uid)) || '[]'); } catch(e) { return []; }
+                    })();
+                    if (localNotes.length && window.firebaseSet) {
+                        window.firebaseSet(personalNotesCloudRef, localNotes).catch(error => {
+                            console.error('No se pudieron migrar las notas locales a Firebase:', error);
+                        });
+                    } else if (window.currentFirebaseUser?.uid === uid) {
+                        localStorage.setItem(notesStorageKey(uid), '[]');
+                        if (typeof renderNotes === 'function' && (typeof currentMainTab === 'undefined' || currentMainTab === 'notas')) renderNotes();
+                    }
+                }
+            }, error => {
+                console.error('Error escuchando notas personales en Firebase:', error);
+                if (window.showToast) window.showToast('No se pudieron cargar las notas desde Firebase. Revisa las reglas de la base de datos.', 'danger');
+            });
+        };
         function getPastAgendaExams() {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
