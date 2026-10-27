@@ -5199,6 +5199,7 @@ html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { backg
         }
 
         window.renderAgendaCalendar = function() {
+            autoCompletePastExams();
             const grid = document.getElementById('agendaCalendarGrid');
             const label = document.getElementById('agendaCalendarMonthLabel');
             const dayEvents = document.getElementById('agendaCalendarDayEvents');
@@ -5286,7 +5287,42 @@ html.offline-mode .dark .bg-white, html.offline-mode .dark .bg-slate-800 { backg
         }
 
 
+        // Marca automáticamente como completados los exámenes cuya fecha ya pasó.
+        // En clases compartidas, el estado de completado es personal y se guarda en Firebase.
+        function autoCompletePastExams() {
+            const now = new Date();
+            const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            const isExam = task => String(task?.type || '').trim().toLowerCase() === 'exam';
+            const pastExams = (window.appData?.agendaTasks || []).filter(task => {
+                if (!task || !isExam(task) || !task.dueDate || task.completed) return false;
+                // Las fechas de input[type=date] tienen formato YYYY-MM-DD; comparar claves
+                // evita problemas de zona horaria al pasar de un día a otro.
+                const dueKey = String(task.dueDate).slice(0, 10);
+                return /^\d{4}-\d{2}-\d{2}$/.test(dueKey) && dueKey < todayKey;
+            });
+            if (!pastExams.length) return;
+
+            if (window.activeClassId && window.activeDataMode === 'shared' && window.currentFirebaseUser) {
+                const ids = new Set(window.classPersonalAttendance?.completedAgendaIds || []);
+                pastExams.forEach(task => ids.add(task.id));
+                window.classPersonalAttendance.completedAgendaIds = Array.from(ids);
+                pastExams.forEach(task => { task.completed = true; });
+                localStorage.setItem(
+                    'attendance_shared_personal_' + window.activeClassId + '_' + window.currentFirebaseUser.uid,
+                    JSON.stringify(window.classPersonalAttendance)
+                );
+                if (typeof window.saveClassPersonalAttendance === 'function') {
+                    Promise.resolve(window.saveClassPersonalAttendance(window.activeClassId, window.currentFirebaseUser.uid))
+                        .catch(error => console.error('No se pudieron sincronizar los exámenes completados:', error));
+                }
+            } else {
+                pastExams.forEach(task => { task.completed = true; });
+                if (typeof saveToLocalStorage === 'function') saveToLocalStorage();
+            }
+        }
+
         function renderAgendaList() {
+            autoCompletePastExams();
             const container = document.getElementById('agendaItemsContainer');
             const emptyState = document.getElementById('emptyAgendaState');
             const next7Container = document.getElementById('next7DaysContainer');
@@ -6516,6 +6552,7 @@ async function shareDailyJoke(){
 }
 
 function renderDashboard(){
+ autoCompletePastExams();
  const tasks=(window.appData.agendaTasks||[]).filter(t=>!t.completed && (!window.activeClassId || isSubjectEnrolled((window.appData.subjects||[]).find(s=>s.id===t.subjectId))));
  const now=new Date(); const key=d=>{const x=new Date(d+'T23:59:59');return x;};
  const upcoming=tasks.filter(t=>key(t.dueDate)>=now).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
